@@ -1,0 +1,8 @@
+**/dist
+node_modules
+coverage
+reports
+pnpm-lock.yaml
+CHANGELOG.md
+*.html
+.turbo
