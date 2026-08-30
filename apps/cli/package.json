@@ -1,0 +1,30 @@
+{
+  "name": "cli",
+  "version": "0.1.0",
+  "description": "mct — the MapColonies infra-tools command-line interface",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "mct": "./bin/mct.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "type-check": "tsc --project tsconfig.json --noEmit",
+    "pretest": "pnpm run build",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "format": "prettier --check . --ignore-path ../../.prettierignore",
+    "format:fix": "prettier --write . --ignore-path ../../.prettierignore"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
