@@ -20,6 +20,7 @@
     "format:fix": "prettier --write . --ignore-path ../../.prettierignore"
   },
   "dependencies": {
+    "@map-colonies/read-pkg": "^2.0.0",
     "commander": "^15.0.0"
   },
   "devDependencies": {

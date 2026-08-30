@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { readPackageJsonSync } from '@map-colonies/read-pkg';
 import { Command } from 'commander';
 
 interface PackageMetadata {
@@ -15,9 +15,8 @@ interface PackageMetadata {
  */
 function readPackageMetadata(): PackageMetadata {
   const packageJsonPath = path.join(import.meta.dirname, '..', 'package.json');
-  const raw = readFileSync(packageJsonPath, 'utf8');
 
-  return JSON.parse(raw) as PackageMetadata;
+  return readPackageJsonSync(packageJsonPath) as PackageMetadata;
 }
 
 /**
