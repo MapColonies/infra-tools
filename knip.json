@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreDependencies": ["@map-colonies/tsconfig", "eslint", "prettier"],
+  "ignoreDependencies": ["@map-colonies/tsconfig", "eslint", "@types/vscode"],
   "rules": {
     "catalog": "off"
   }
