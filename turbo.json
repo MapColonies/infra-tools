@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "globalDependencies": ["turbo.json", "pnpm-workspace.yaml"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"],
+      "outputLogs": "errors-only"
+    },
+    "lint": {
+      "dependsOn": ["^build"],
+      "outputLogs": "errors-only"
+    },
+    "type-check": {
+      "dependsOn": ["^build"],
+      "outputLogs": "errors-only"
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputLogs": "errors-only"
+    },
+    "format": {
+      "dependsOn": [],
+      "outputLogs": "errors-only"
+    },
+    "package": {
+      "dependsOn": ["^build", "build"],
+      "outputLogs": "errors-only"
+    },
+    "//#knip": {
+      "outputLogs": "errors-only"
+    }
+  }
+}
