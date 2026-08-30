@@ -41,6 +41,9 @@ importers:
       '@map-colonies/tsconfig':
         specifier: ^2.0.0
         version: 2.0.0
+      cli:
+        specifier: workspace:*
+        version: link:apps/cli
       eslint:
         specifier: 'catalog:'
         version: 9.39.5(jiti@2.7.0)
@@ -62,6 +65,25 @@ importers:
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
+
+  apps/cli:
+    dependencies:
+      '@map-colonies/read-pkg':
+        specifier: ^2.0.0
+        version: 2.0.0
+      commander:
+        specifier: ^15.0.0
+        version: 15.0.0
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.0
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.4(@types/node@24.12.0)(vite@8.2.2(@types/node@24.12.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
 
   apps/vscode:
     devDependencies:
@@ -523,6 +545,10 @@ packages:
 
   '@map-colonies/prettier-config@1.0.0':
     resolution: {integrity: sha512-IQnP63LimwfnIX9N/BVC3Th5hVhBw+LwNQUz5s7lZoxOSM2AJWwT/E/rjvnh3lnEgQa0m0nJJJLzyVAjWODDGA==}
+    engines: {node: '>=24'}
+
+  '@map-colonies/read-pkg@2.0.0':
+    resolution: {integrity: sha512-rMASq2JeRuaWYGqPN68+FwQa4ZSVJBFpttRypUX6RflZK0svZNNCQSWleqz9iJGw5oVDRILNpAb4HRHm/7rszA==}
     engines: {node: '>=24'}
 
   '@map-colonies/tsconfig@2.0.0':
@@ -1516,6 +1542,10 @@ packages:
   commander@12.1.0:
     resolution: {integrity: sha512-Vw8qHK3bZM9y/P10u3Vib8o/DdkvA2OtPtZvD871QKjy74Wj1WSKFILMPRPSdUSx5RFK1arlJzEtA4PkFgnbuA==}
     engines: {node: '>=18'}
+
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
 
   comment-parser@1.4.8:
     resolution: {integrity: sha512-rKZTGo4fzKYna8UcL0isTg5wkBNla7bxTypLwZQXjIdi++IdP1OJ41rI5Mti3/jltkPujbu4i9LIARYA+zpotQ==}
@@ -2783,6 +2813,10 @@ packages:
     resolution: {integrity: sha512-9kY+CygyYM6j02t5YFHbNz2FN5QmYGv9zAjVp4lCDjlCw7amdckXlEt/bjMhUIfj4ThGRE4gCUH5+yGnNuPo5A==}
     engines: {node: '>=10.0.0'}
 
+  tagged-tag@1.0.0:
+    resolution: {integrity: sha512-yEFYrVhod+hdNyx7g5Bnkkb0G6si8HJurOoOEgC8B/O0uXLHlaey/65KRv6cuWBNhBgHKAROVpc7QyYqE5gFng==}
+    engines: {node: '>=20'}
+
   tar-fs@2.1.5:
     resolution: {integrity: sha512-OboTd8mmMhZDNPV+UjQcK9yKAatXu2aJ+r1w4im1Otd4M4fl2hwvdoXUxIYHFTHWK/3y3FarBP70v3vwmGlOxw==}
 
@@ -2854,6 +2888,10 @@ packages:
   type-fest@4.41.0:
     resolution: {integrity: sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==}
     engines: {node: '>=16'}
+
+  type-fest@5.8.0:
+    resolution: {integrity: sha512-YGYEVz3Fm5iy/AybuA0oyNFq7H4CgQNfRp/qfe8nurE1kuCeNm3/vfm9X4Mtl+qLyaKJUh5xrFZwogr41SMjYA==}
+    engines: {node: '>=20'}
 
   typed-rest-client@1.8.11:
     resolution: {integrity: sha512-5UvfMpd1oelmUPRbbaVnq+rHP7ng2cE4qoQkQeAqxRL6PklkxsM0g32/HL0yfvruK6ojQ5x8EE+HF4YV6DtuCA==}
@@ -3535,6 +3573,10 @@ snapshots:
       - typescript
 
   '@map-colonies/prettier-config@1.0.0': {}
+
+  '@map-colonies/read-pkg@2.0.0':
+    dependencies:
+      type-fest: 5.8.0
 
   '@map-colonies/tsconfig@2.0.0': {}
 
@@ -4419,6 +4461,8 @@ snapshots:
       delayed-stream: 1.0.0
 
   commander@12.1.0: {}
+
+  commander@15.0.0: {}
 
   comment-parser@1.4.8: {}
 
@@ -5744,6 +5788,8 @@ snapshots:
       string-width: 4.2.3
       strip-ansi: 6.0.1
 
+  tagged-tag@1.0.0: {}
+
   tar-fs@2.1.5:
     dependencies:
       chownr: 1.1.4
@@ -5818,6 +5864,10 @@ snapshots:
       prelude-ls: 1.2.1
 
   type-fest@4.41.0: {}
+
+  type-fest@5.8.0:
+    dependencies:
+      tagged-tag: 1.0.0
 
   typed-rest-client@1.8.11:
     dependencies:

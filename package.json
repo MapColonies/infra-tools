@@ -26,6 +26,7 @@
     "@map-colonies/commitlint-config": "^2.0.1",
     "@map-colonies/prettier-config": "^1.0.0",
     "@map-colonies/tsconfig": "^2.0.0",
+    "cli": "workspace:*",
     "eslint": "catalog:",
     "husky": "^9.1.7",
     "knip": "^6.33.0",
