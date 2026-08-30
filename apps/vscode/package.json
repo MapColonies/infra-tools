@@ -1,0 +1,46 @@
+{
+  "name": "vscode",
+  "displayName": "Infra Tools",
+  "description": "Infra Tools VS Code extension (bootstrap workspace — no features yet).",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "mapcolonies",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MapColonies/infra-tools.git",
+    "directory": "apps/vscode"
+  },
+  "engines": {
+    "node": ">=24",
+    "vscode": "^1.135.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "format": "prettier --ignore-path ../../.prettierignore --check .",
+    "format:fix": "prettier --ignore-path ../../.prettierignore --write .",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "type-check": "tsc --noEmit -p tsconfig.json",
+    "build": "node esbuild.config.js && tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "package": "vsce package --no-yarn --out dist/"
+  },
+  "devDependencies": {
+    "@map-colonies/eslint-config": "^8.1.0",
+    "@map-colonies/tsconfig": "^2.0.0",
+    "@types/node": "catalog:",
+    "@types/vscode": "^1.134.0",
+    "@vitest/eslint-plugin": "^1.6.27",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "eslint": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
