@@ -1,0 +1,22 @@
+name: release-please
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          # A PAT is required so that the release PR and, once merged, the tag push it makes
+          # trigger downstream workflows (the default GITHUB_TOKEN's actions don't).
+          token: ${{ secrets.GH_PAT }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
