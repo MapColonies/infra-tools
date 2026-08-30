@@ -2,7 +2,7 @@
 // extension host, leaving the `vscode` module external (it's supplied by
 // the host at runtime). Follows the bundling approach from VS Code's
 // official extension guidance: https://code.visualstudio.com/api/working-with-extensions/bundling-extension
-const esbuild = require('esbuild');
+import esbuild from 'esbuild';
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');

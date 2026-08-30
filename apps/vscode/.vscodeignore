@@ -5,7 +5,7 @@ test/**
 *.tsbuildinfo
 tsconfig*.json
 eslint.config.mjs
-esbuild.config.js
+esbuild.config.mjs
 vitest.config.mts
 **/*.map
 **/.gitignore
