@@ -26,6 +26,7 @@
     },
     "package": {
       "dependsOn": ["^build", "build"],
+      "outputs": ["dist/**"],
       "outputLogs": "errors-only"
     },
     "//#knip": {

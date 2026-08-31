@@ -1,0 +1,107 @@
+name: Pull Request
+
+on:
+  pull_request:
+
+env:
+  # Turborepo's `--affected` flag diffs against this ref to determine which
+  # workspaces changed relative to the PR's base branch. `fetch-depth: 0` on
+  # the checkout below is what makes `origin/<base_ref>` resolvable here.
+  TURBO_SCM_BASE: origin/${{ github.base_ref }}
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up workspace
+        uses: ./.github/actions/setup
+
+      - name: Check formatting of affected workspaces
+        run: pnpm exec turbo run format --affected
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up workspace
+        uses: ./.github/actions/setup
+
+      - name: Lint affected workspaces
+        run: pnpm exec turbo run lint --affected
+
+  type-check:
+    name: Type-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up workspace
+        uses: ./.github/actions/setup
+
+      - name: Type-check affected workspaces
+        run: pnpm exec turbo run type-check --affected
+
+  knip:
+    name: Unused code (knip)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up workspace
+        uses: ./.github/actions/setup
+
+      - name: Report unused code
+        run: pnpm exec turbo run knip --affected
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up workspace
+        uses: ./.github/actions/setup
+
+      - name: Run tests for affected workspaces
+        run: pnpm exec turbo run test --affected
+
+  package-extension:
+    name: Package VS Code extension
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up workspace
+        uses: ./.github/actions/setup
+
+      # Not affected-filtered: this job is the only automated proof the
+      # .vsix bundle actually assembles, so it always runs regardless of
+      # which workspaces changed. `turbo run package` (rather than a plain
+      # `pnpm --filter vscode package`) is used deliberately so the task's
+      # `build` dependency runs first — the extension can't be packaged
+      # without a build, and turbo's dependency graph guarantees the order.
+      - name: Build the .vsix package
+        run: pnpm exec turbo run package --filter=vscode

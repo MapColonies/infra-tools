@@ -1,0 +1,40 @@
+name: Setup
+description: >
+  Restore caches, install the pinned Node/pnpm toolchain, and install
+  workspace dependencies with a frozen lockfile.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v6
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+
+    - name: Resolve pnpm store directory
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore pnpm store cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+
+    - name: Restore turbo cache
+      uses: actions/cache@v6
+      with:
+        path: .turbo
+        key: ${{ runner.os }}-turbo-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-turbo-
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
