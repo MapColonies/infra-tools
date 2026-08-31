@@ -39,6 +39,8 @@
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
     "eslint": "catalog:",
+    "helm": "workspace:*",
+    "oci-registry": "workspace:*",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
