@@ -1,6 +1,6 @@
 {
   "name": "oci-registry",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Container registry knowledge: reference normalization and manifest existence checks.",
   "private": true,
   "main": "./dist/index.js",
