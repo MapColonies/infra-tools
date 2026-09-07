@@ -4,7 +4,7 @@
     {
       "label": "build vscode extension",
       "type": "shell",
-      "command": "pnpm --filter vscode run build",
+      "command": "pnpm exec turbo run build --filter=vscode",
       "group": "build",
       "presentation": {
         "reveal": "silent"

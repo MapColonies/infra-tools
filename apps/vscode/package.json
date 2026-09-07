@@ -31,6 +31,10 @@
     "test": "vitest run",
     "package": "vsce package --no-yarn --out dist/"
   },
+  "dependencies": {
+    "helm": "workspace:*",
+    "oci-registry": "workspace:*"
+  },
   "devDependencies": {
     "@map-colonies/eslint-config": "^8.1.0",
     "@types/node": "catalog:",
@@ -39,8 +43,6 @@
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",
     "eslint": "catalog:",
-    "helm": "workspace:*",
-    "oci-registry": "workspace:*",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
