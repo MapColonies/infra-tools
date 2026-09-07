@@ -29,7 +29,11 @@
     "type-check": "tsc --noEmit -p tsconfig.json",
     "build": "node esbuild.config.mjs && tsc -p tsconfig.build.json",
     "test": "vitest run",
-    "package": "vsce package --no-yarn --out dist/"
+    "package": "vsce package --no-yarn --no-dependencies --out dist/"
+  },
+  "dependencies": {
+    "helm": "workspace:*",
+    "oci-registry": "workspace:*"
   },
   "devDependencies": {
     "@map-colonies/eslint-config": "^8.1.0",

@@ -25,8 +25,13 @@ async function main() {
   if (watch) {
     await ctx.watch();
   } else {
-    await ctx.rebuild();
-    await ctx.dispose();
+    // dispose() in a finally: a build error must not leave the esbuild
+    // service process running, or the task hangs instead of exiting.
+    try {
+      await ctx.rebuild();
+    } finally {
+      await ctx.dispose();
+    }
   }
 }
 

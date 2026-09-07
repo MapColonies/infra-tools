@@ -75,6 +75,16 @@
       "release-type": "node",
       "component": "vscode",
       "component-no-space": true
+    },
+    "packages/helm": {
+      "release-type": "node",
+      "component": "helm",
+      "component-no-space": true
+    },
+    "packages/oci-registry": {
+      "release-type": "node",
+      "component": "oci-registry",
+      "component-no-space": true
     }
   }
 }
