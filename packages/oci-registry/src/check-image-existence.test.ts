@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { checkImageExistence } from './check-image-existence';
 import type { FetchLike, FetchResponseLike } from './fetch-like';
 
-function jsonResponse(status: number, body: unknown): FetchResponseLike {
+function fakeFetchResponse(status: number, body: unknown): FetchResponseLike {
   return {
     status,
     ok: status >= 200 && status < 300,
@@ -17,7 +17,7 @@ function distributionError(code: string): { errors: { code: string }[] } {
 
 describe('checkImageExistence', () => {
   it('should issue a manifest GET with the OCI/Docker accept header and report exists on a 200', async () => {
-    const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(200, { schemaVersion: 2 }));
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse(200, { schemaVersion: 2 }));
 
     const verdict = await checkImageExistence({ repository: 'docker.io/library/nginx', tag: '1.19', fetch });
 
@@ -37,7 +37,7 @@ describe('checkImageExistence', () => {
   });
 
   it('should report repository-not-found on a 404 whose body carries NAME_UNKNOWN', async () => {
-    const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(404, distributionError('NAME_UNKNOWN')));
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse(404, distributionError('NAME_UNKNOWN')));
 
     const verdict = await checkImageExistence({ repository: 'ghcr.io/example/does-not-exist', tag: '1.0.0', fetch });
 
@@ -45,7 +45,7 @@ describe('checkImageExistence', () => {
   });
 
   it('should report tag-not-found on a 404 whose body carries MANIFEST_UNKNOWN', async () => {
-    const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(404, distributionError('MANIFEST_UNKNOWN')));
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse(404, distributionError('MANIFEST_UNKNOWN')));
 
     const verdict = await checkImageExistence({ repository: 'docker.io/library/nginx', tag: 'does-not-exist', fetch });
 
@@ -57,7 +57,7 @@ describe('checkImageExistence', () => {
   });
 
   it('should report unverifiable, never a false negative, when a 404 body carries no recognised code', async () => {
-    const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(404, {}));
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse(404, {}));
 
     const verdict = await checkImageExistence({ repository: 'docker.io/library/nginx', tag: '1.19', fetch });
 
@@ -65,7 +65,7 @@ describe('checkImageExistence', () => {
   });
 
   it('should report unverifiable when the registry demands authentication this package cannot provide', async () => {
-    const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(401, {}));
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse(401, {}));
 
     const verdict = await checkImageExistence({ repository: 'private.example.com/app', tag: '1.0.0', fetch });
 
@@ -81,7 +81,7 @@ describe('checkImageExistence', () => {
   });
 
   it('should report unverifiable on an unexpected status code', async () => {
-    const fetch = vi.fn<FetchLike>().mockResolvedValue(jsonResponse(500, {}));
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse(500, {}));
 
     const verdict = await checkImageExistence({ repository: 'docker.io/library/nginx', tag: '1.19', fetch });
 
@@ -95,5 +95,32 @@ describe('checkImageExistence', () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'no-registry' });
+  });
+
+  it('should report unverifiable without issuing a request when the host segment smuggles userinfo', async () => {
+    const fetch = vi.fn<FetchLike>();
+
+    const verdict = await checkImageExistence({ repository: 'docker.io@evil.example/library/nginx', tag: '1.19', fetch });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'no-registry' });
+  });
+
+  it('should report unverifiable without issuing a request when a name component is a dot-segment', async () => {
+    const fetch = vi.fn<FetchLike>();
+
+    const verdict = await checkImageExistence({ repository: 'docker.io/../secrets', tag: '1.19', fetch });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'no-registry' });
+  });
+
+  it('should report unverifiable without issuing a request when the tag does not fit the OCI tag grammar', async () => {
+    const fetch = vi.fn<FetchLike>();
+
+    const verdict = await checkImageExistence({ repository: 'docker.io/library/nginx', tag: '../../other', fetch });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'malformed-reference' });
   });
 });

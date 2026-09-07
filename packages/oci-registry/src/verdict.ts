@@ -18,7 +18,11 @@ export type UnverifiableReason =
   /** The request itself failed — DNS, connection refused, timeout, and so on. */
   | 'network-error'
   /** The registry responded, but not in a way this checker understands. */
-  | 'unexpected-response';
+  | 'unexpected-response'
+  /** The tag doesn't fit the OCI tag grammar. Rejected before any request is
+   * issued — building a manifest URL from an unvalidated tag is how a
+   * crafted values file smuggles a path traversal into the request. */
+  | 'malformed-reference';
 
 /**
  * The outcome of checking whether an image reference exists.

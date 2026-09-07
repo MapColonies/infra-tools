@@ -1,3 +1,16 @@
+// A registry host: DNS-label characters and dots, with an optional numeric
+// port. Anything outside this set — most pointedly `@`, which a raw
+// `https://${host}/...` template would let a crafted repository string use
+// to smuggle a different host into the request via URL userinfo — is
+// rejected rather than sent to `fetch`.
+const HOST_PATTERN = /^[a-zA-Z0-9.-]+(?::[0-9]+)?$/;
+
+// The OCI distribution spec's `name` grammar: one or more lowercase
+// path components, each starting and ending alphanumeric, joined by `/`.
+// A component can never be `.` or `..`, which is what keeps a crafted name
+// from collapsing the manifest URL's path onto a neighbouring endpoint.
+const NAME_PATTERN = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:\/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*$/;
+
 /** Where a repository resolved to: a registry host, and the image's name on it. */
 export interface RepositoryLocation {
   readonly host: string;
@@ -29,7 +42,7 @@ export function resolveExplicitHost(repository: string): RepositoryLocation | un
 
   const looksLikeHost = firstSegment === 'localhost' || firstSegment.includes('.') || firstSegment.includes(':');
 
-  if (!looksLikeHost) {
+  if (!looksLikeHost || !HOST_PATTERN.test(firstSegment) || !NAME_PATTERN.test(name)) {
     return undefined;
   }
 

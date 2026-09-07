@@ -19,6 +19,11 @@ const MANIFEST_ACCEPT_HEADER = [
 const HTTP_STATUS_UNAUTHORIZED = 401;
 const HTTP_STATUS_NOT_FOUND = 404;
 
+// The OCI tag grammar. Validated up front, before any URL is built, so a
+// crafted tag (`../../other-endpoint`, `latest?x=`) never reaches the
+// request as anything other than the rejected reference it is.
+const TAG_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
+
 interface CheckImageExistenceParams {
   readonly repository: string;
   readonly tag: string;
@@ -48,12 +53,16 @@ async function checkImageExistence(params: CheckImageExistenceParams): Promise<I
     return { kind: 'unverifiable', reason: 'no-registry' };
   }
 
+  if (!TAG_PATTERN.test(tag)) {
+    return { kind: 'unverifiable', reason: 'malformed-reference' };
+  }
+
   const { host, name } = location;
-  const url = `https://${host}/v2/${name}/manifests/${tag}`;
+  const url = new URL(`https://${host}/v2/${name}/manifests/${tag}`);
 
   let response: FetchResponseLike;
   try {
-    response = await fetch(url, { method: 'GET', headers: { accept: MANIFEST_ACCEPT_HEADER } });
+    response = await fetch(url.href, { method: 'GET', headers: { accept: MANIFEST_ACCEPT_HEADER } });
   } catch {
     return { kind: 'unverifiable', reason: 'network-error' };
   }
