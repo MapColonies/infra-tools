@@ -78,8 +78,15 @@ async function checkImageReferencesInDocument(
     return;
   }
 
+  // A tagless reference has nothing to check yet — resolving it through the
+  // governing chart's `appVersion` is a later ticket's job. Checking it here
+  // with no tag would either fabricate one or crash; neither is correct.
+  const taggedReferences = references.filter(
+    (reference): reference is ImageReference & { tag: NonNullable<ImageReference['tag']> } => reference.tag !== undefined
+  );
+
   const checks = await Promise.all(
-    references.map(async (reference) => ({
+    taggedReferences.map(async (reference) => ({
       reference,
       verdict: await checkImageExistence({
         repository: reference.repository.text,
