@@ -1,13 +1,22 @@
 import * as vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { emitDidOpenTextDocument, getLastDiagnosticCollection } from '../test/vscode-stub';
+import {
+  createTextEditorStub,
+  emitDidChangeVisibleTextEditors,
+  emitDidOpenTextDocument,
+  getLastDiagnosticCollection,
+  getRegisteredHoverProvider,
+  setVisibleTextEditors,
+  type TextEditorStub,
+} from '../test/vscode-stub';
 import { activate, deactivate } from './extension';
 
-/** Builds a fake `vscode.TextDocument`, with a real `positionAt` so range assertions are exact. */
+/** Builds a fake `vscode.TextDocument`, with a real `positionAt`/`offsetAt` pair so range assertions are exact. */
 function createFakeDocument(path: string, text: string, languageId = 'yaml'): vscode.TextDocument {
   return {
     uri: { path, toString: () => path },
     languageId,
+    version: 1,
     getText: () => text,
     positionAt: (offset: number) => {
       const before = text.slice(0, offset);
@@ -16,6 +25,16 @@ function createFakeDocument(path: string, text: string, languageId = 'yaml'): vs
       const character = lines[lines.length - 1]?.length ?? 0;
 
       return new vscode.Position(line, character);
+    },
+    offsetAt: (position: vscode.Position) => {
+      const lines = text.split('\n');
+      let offset = 0;
+
+      for (let line = 0; line < position.line; line += 1) {
+        offset += (lines[line]?.length ?? 0) + '\n'.length;
+      }
+
+      return offset + position.character;
     },
   } as unknown as vscode.TextDocument;
 }
@@ -30,6 +49,49 @@ function fakeFetchResponse(status: number, body: unknown = {}): { status: number
     // eslint-disable-next-line @typescript-eslint/promise-function-async -- trivial canned response, nothing to await
     json: () => Promise.resolve(body),
   };
+}
+
+/** Simulates an edit: VS Code bumps a document's `version` on every change. */
+function bumpVersion(document: vscode.TextDocument): void {
+  (document as { version: number }).version += 1;
+}
+
+/** Stages `document` as the only visible editor, then fires the open event. */
+async function openInVisibleEditor(document: vscode.TextDocument): Promise<TextEditorStub> {
+  const editor = createTextEditorStub(document);
+
+  setVisibleTextEditors([editor]);
+  await emitDidOpenTextDocument(document);
+
+  return editor;
+}
+
+/** The decoration options an editor's most recent `setDecorations` call carried. */
+function getLastDecorations(editor: TextEditorStub): vscode.DecorationOptions[] {
+  const { calls } = editor.setDecorations.mock;
+  const lastCall = calls[calls.length - 1] as [unknown, vscode.DecorationOptions[]] | undefined;
+
+  if (lastCall === undefined) {
+    throw new Error('expected setDecorations to have been called');
+  }
+
+  return lastCall[1];
+}
+
+/** Asks the registered hover provider for a hover at `offset` in `document`. */
+function hoverAt(document: vscode.TextDocument, offset: number): vscode.Hover | undefined {
+  return getRegisteredHoverProvider()?.provideHover(document, document.positionAt(offset)) as vscode.Hover | undefined;
+}
+
+/** The plain text of a hover's single content entry. */
+function getHoverText(hover: vscode.Hover | undefined): string {
+  const [content] = hover?.contents ?? [];
+
+  if (content === undefined || typeof content === 'string') {
+    throw new Error('expected a hover carrying one MarkdownString');
+  }
+
+  return content.value;
 }
 
 /** Asserts a diagnostics `.set()` call carried exactly one diagnostic, and returns it. */
@@ -61,6 +123,8 @@ describe('extension', () => {
     for (const subscription of context.subscriptions) {
       subscription.dispose();
     }
+
+    setVisibleTextEditors([]);
   });
 
   it('should create an output channel and register it for disposal on activate', () => {
@@ -134,6 +198,156 @@ describe('extension', () => {
     const collection = getLastDiagnosticCollection();
 
     expect(collection?.set).toHaveBeenCalledWith(document.uri, []);
+  });
+
+  it('should render a checkmark on the repository of a reference that exists', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    const editor = await openInVisibleEditor(document);
+    const decorations = getLastDecorations(editor);
+
+    expect(decorations).toHaveLength(1);
+    expect(decorations[0]?.renderOptions?.after?.contentText).toContain('✓');
+
+    const repositoryStart = VALUES_YAML.indexOf('docker.io/library/nginx');
+
+    expect(decorations[0]?.range).toEqual(
+      new vscode.Range(document.positionAt(repositoryStart), document.positionAt(repositoryStart + 'docker.io/library/nginx'.length))
+    );
+  });
+
+  it('should omit the registry name from the checkmark when it matches the host the file names', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    const editor = await openInVisibleEditor(document);
+
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
+  it('should render no checkmark when the tag does not exist, leaving only the diagnostic', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    const editor = await openInVisibleEditor(document);
+
+    expect(getLastDecorations(editor)).toEqual([]);
+
+    const diagnostic = getSingleDiagnostic(getLastDiagnosticCollection()?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined);
+
+    expect(diagnostic.message).toContain('1.19');
+  });
+
+  it('should render neither a checkmark nor a diagnostic when the reference is unverifiable', async () => {
+    const fetch = vi.fn().mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    const editor = await openInVisibleEditor(document);
+
+    expect(getLastDecorations(editor)).toEqual([]);
+    expect(getLastDiagnosticCollection()?.set).toHaveBeenCalledWith(document.uri, []);
+  });
+
+  it('should report the registry that answered when hovering a verified reference', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    await openInVisibleEditor(document);
+
+    const hoverText = getHoverText(hoverAt(document, VALUES_YAML.indexOf('docker.io/library/nginx')));
+
+    expect(hoverText).toContain('docker.io');
+    expect(hoverText).toContain('Verified');
+  });
+
+  it('should report why a reference could not be verified when hovering an unverifiable one', async () => {
+    const fetch = vi.fn().mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    await openInVisibleEditor(document);
+
+    const hoverText = getHoverText(hoverAt(document, VALUES_YAML.indexOf('1.19')));
+
+    expect(hoverText).toContain('Not verified');
+    expect(hoverText).toContain('could not be reached');
+  });
+
+  it('should provide no hover for a reference that does not exist, which already speaks through its diagnostic', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    await openInVisibleEditor(document);
+
+    expect(hoverAt(document, VALUES_YAML.indexOf('1.19'))).toBeUndefined();
+  });
+
+  it('should provide no hover outside any checked reference', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    await openInVisibleEditor(document);
+
+    expect(hoverAt(document, VALUES_YAML.indexOf('image:'))).toBeUndefined();
+  });
+
+  it('should create the checkmark decoration type and register a yaml hover provider on activate', () => {
+    activate(context, { fetch: vi.fn() });
+
+    expect(vscode.window.createTextEditorDecorationType).toHaveBeenCalledWith({
+      after: { color: new vscode.ThemeColor('charts.green'), margin: '0 0 0 0.5em' },
+    });
+    expect(vscode.languages.registerHoverProvider).toHaveBeenCalledWith({ language: 'yaml' }, expect.anything());
+  });
+
+  it('should re-apply checkmarks to an editor that becomes visible after the document was checked', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+
+    setVisibleTextEditors([]);
+    await emitDidOpenTextDocument(document);
+
+    const editor = createTextEditorStub(document);
+    await emitDidChangeVisibleTextEditors([editor]);
+
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
+  it('should drop checkmarks rather than re-project them onto text edited since the check', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    await openInVisibleEditor(document);
+
+    bumpVersion(document);
+
+    const editor = createTextEditorStub(document);
+    await emitDidChangeVisibleTextEditors([editor]);
+
+    expect(getLastDecorations(editor)).toEqual([]);
+  });
+
+  it('should provide no hover once the document has been edited past the checked version', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    await openInVisibleEditor(document);
+
+    bumpVersion(document);
+
+    expect(hoverAt(document, VALUES_YAML.indexOf('docker.io/library/nginx'))).toBeUndefined();
   });
 
   it('should ignore a document that is not the conventional values file name', async () => {

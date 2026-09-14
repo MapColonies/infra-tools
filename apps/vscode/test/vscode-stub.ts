@@ -1,5 +1,3 @@
-import { vi } from 'vitest';
-
 /**
  * Minimal stand-in for the `vscode` module.
  *
@@ -8,13 +6,11 @@ import { vi } from 'vitest';
  * `import * as vscode from 'vscode'` in tests without booting a real VS Code
  * instance. Extend this stub as the extension grows — don't add per-file
  * `vi.mock('vscode', …)` factories.
+ *
+ * @packageDocumentation
  */
-const window = {
-  createOutputChannel: vi.fn(() => ({
-    appendLine: vi.fn(),
-    dispose: vi.fn(),
-  })),
-};
+
+import { vi } from 'vitest';
 
 class Position {
   public constructor(
@@ -28,6 +24,25 @@ class Range {
     public readonly start: Position,
     public readonly end: Position
   ) {}
+}
+
+class ThemeColor {
+  public constructor(public readonly id: string) {}
+}
+
+class MarkdownString {
+  public constructor(public readonly value: string = '') {}
+}
+
+class Hover {
+  public readonly contents: (MarkdownString | string)[];
+
+  public constructor(
+    contents: MarkdownString | string | (MarkdownString | string)[],
+    public readonly range?: Range
+  ) {
+    this.contents = Array.isArray(contents) ? contents : [contents];
+  }
 }
 
 // This reproduces the real `vscode.DiagnosticSeverity` enum's member names
@@ -79,13 +94,50 @@ function createDiagnosticCollectionStub(): DiagnosticCollectionStub {
   return stub;
 }
 
+/** The subset of `vscode.HoverProvider` the extension registers. */
+interface HoverProviderStub {
+  readonly provideHover: (document: unknown, position: unknown) => unknown;
+}
+
+// Registered providers are removed again on dispose, so a test that disposes
+// its context's subscriptions leaves no provider behind for the next one.
+let hoverProviders: HoverProviderStub[] = [];
+
 const languages = {
   createDiagnosticCollection: vi.fn(() => createDiagnosticCollectionStub()),
+  registerHoverProvider: vi.fn((_selector: unknown, provider: HoverProviderStub) => {
+    hoverProviders.push(provider);
+
+    return {
+      dispose: vi.fn(() => {
+        hoverProviders = hoverProviders.filter((registered) => registered !== provider);
+      }),
+    };
+  }),
 };
 
 /** Test-only helper: the most recently created diagnostic collection. */
 function getLastDiagnosticCollection(): DiagnosticCollectionStub | undefined {
   return diagnosticCollections[diagnosticCollections.length - 1];
+}
+
+/** Test-only helper: the most recently registered, still-undisposed hover provider. */
+function getRegisteredHoverProvider(): HoverProviderStub | undefined {
+  return hoverProviders[hoverProviders.length - 1];
+}
+
+/**
+ * Test-only stand-in for `vscode.TextEditor`: the document it shows, and a
+ * spy recording every `setDecorations` call made against it.
+ */
+interface TextEditorStub {
+  readonly document: unknown;
+  readonly setDecorations: ReturnType<typeof vi.fn>;
+}
+
+/** Test-only helper that builds a {@link TextEditorStub}. Not part of the real `vscode` API. */
+function createTextEditorStub(document: unknown): TextEditorStub {
+  return { document, setDecorations: vi.fn() };
 }
 
 /**
@@ -122,6 +174,17 @@ function createEventEmitterStub<T>(): {
 }
 
 const onDidOpenTextDocumentEmitter = createEventEmitterStub<unknown>();
+const onDidChangeVisibleTextEditorsEmitter = createEventEmitterStub<readonly TextEditorStub[]>();
+
+const window = {
+  createOutputChannel: vi.fn(() => ({
+    appendLine: vi.fn(),
+    dispose: vi.fn(),
+  })),
+  createTextEditorDecorationType: vi.fn(() => ({ key: 'decoration-type', dispose: vi.fn() })),
+  visibleTextEditors: [] as readonly TextEditorStub[],
+  onDidChangeVisibleTextEditors: onDidChangeVisibleTextEditorsEmitter.event,
+};
 
 const workspace = {
   onDidOpenTextDocument: onDidOpenTextDocumentEmitter.event,
@@ -136,4 +199,40 @@ async function emitDidOpenTextDocument(document: unknown): Promise<void> {
   await onDidOpenTextDocumentEmitter.fire(document);
 }
 
-export { Diagnostic, DiagnosticSeverity, emitDidOpenTextDocument, getLastDiagnosticCollection, languages, Position, Range, window, workspace };
+/**
+ * Test-only helper that replaces `window.visibleTextEditors`. Not part of the
+ * real `vscode` API — tests set it to stage which editors the extension can
+ * decorate, and reset it so one test's editors never leak into another.
+ */
+function setVisibleTextEditors(editors: readonly TextEditorStub[]): void {
+  window.visibleTextEditors = editors;
+}
+
+/**
+ * Test-only helper that fires `window.onDidChangeVisibleTextEditors` after
+ * updating `window.visibleTextEditors`, the order real VS Code uses.
+ */
+async function emitDidChangeVisibleTextEditors(editors: readonly TextEditorStub[]): Promise<void> {
+  setVisibleTextEditors(editors);
+  await onDidChangeVisibleTextEditorsEmitter.fire(editors);
+}
+
+export type { TextEditorStub };
+export {
+  createTextEditorStub,
+  Diagnostic,
+  DiagnosticSeverity,
+  emitDidChangeVisibleTextEditors,
+  emitDidOpenTextDocument,
+  getLastDiagnosticCollection,
+  getRegisteredHoverProvider,
+  Hover,
+  languages,
+  MarkdownString,
+  Position,
+  Range,
+  setVisibleTextEditors,
+  ThemeColor,
+  window,
+  workspace,
+};
