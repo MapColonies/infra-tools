@@ -24,9 +24,19 @@ const MARKS: Record<MarkKind, { readonly glyph: string; readonly color: string }
   unchecked: { glyph: '?', color: 'descriptionForeground' },
 };
 
-// A table rather than a switch, so adding a reason to `UnverifiableReason`
+/**
+ * Why a reference went unanswered: every reason the registry package can
+ * report, plus the ones this extension settles before it asks anything.
+ */
+type UncheckedReason = UnverifiableReason | 'no-tag';
+
+/** A registry verdict, widened by the outcomes this extension decides itself. */
+type ReferenceVerdict = Exclude<ImageVerdict, { kind: 'unverifiable' }> | { readonly kind: 'unverifiable'; readonly reason: UncheckedReason };
+
+// A table rather than a switch, so adding a reason to `UncheckedReason`
 // fails the build here instead of silently hovering with no explanation.
-const UNVERIFIABLE_REASON_TEXT: Record<UnverifiableReason, string> = {
+const UNVERIFIABLE_REASON_TEXT: Record<UncheckedReason, string> = {
+  'no-tag': 'the reference names no tag to check.',
   'no-registry': 'the repository names no registry host.',
   'missing-credential': 'the registry requires credentials this extension cannot supply yet.',
   'network-error': 'the registry could not be reached.',
@@ -39,17 +49,14 @@ const UNVERIFIABLE_REASON_TEXT: Record<UnverifiableReason, string> = {
 // Helm chart-context knowledge this ticket doesn't implement yet.
 const VALUES_FILE_NAME_PATTERN = /^values\.ya?ml$/i;
 
-/** An image reference that names a tag, the only kind this feature checks today. */
-type TaggedImageReference = ImageReference & { readonly tag: NonNullable<ImageReference['tag']> };
-
 /**
  * One checked image reference. Built once per document open, then projected
  * onto every surface the result is shown on — diagnostics, checkmarks, and
  * hovers — so the three can never disagree about a reference.
  */
 interface ReferenceCheck {
-  readonly reference: TaggedImageReference;
-  readonly verdict: ImageVerdict;
+  readonly reference: ImageReference;
+  readonly verdict: ReferenceVerdict;
 }
 
 /** A document's checks, tagged with the document version they describe. */
@@ -178,18 +185,21 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, fet
     return undefined;
   }
 
-  // A tagless reference resolves through `appVersion`, a later ticket's job —
-  // nothing to check yet.
-  const taggedReferences = references.filter((reference): reference is TaggedImageReference => reference.tag !== undefined);
-
+  // A tagless reference resolves through the chart's `appVersion`, a later
+  // ticket's job, so there is nothing to ask a registry yet. It still comes
+  // through as a check: dropping it here is what made a real reference
+  // render nothing at all, which is indistinguishable from a broken tool.
   const checks = await Promise.all(
-    taggedReferences.map(async (reference) => ({
+    references.map(async (reference) => ({
       reference,
-      verdict: await checkImageExistence({
-        repository: reference.repository.text,
-        tag: reference.tag.text,
-        fetch,
-      }),
+      verdict:
+        reference.tag === undefined
+          ? ({ kind: 'unverifiable', reason: 'no-tag' } as const)
+          : await checkImageExistence({
+              repository: reference.repository.text,
+              tag: reference.tag.text,
+              fetch,
+            }),
     }))
   );
 
@@ -226,7 +236,10 @@ function diagnosticsFor(document: vscode.TextDocument, checks: readonly Referenc
     } else if (verdict.kind === 'tag-not-found') {
       fileDiagnostics.push(
         new vscode.Diagnostic(
-          rangeOf(document, reference.tag.range),
+          // A tag-not-found verdict can only come back for a reference that
+          // named a tag, so the fallback is unreachable; it exists so the
+          // type stays honest rather than being asserted away.
+          rangeOf(document, reference.tag?.range ?? reference.repository.range),
           `Tag '${verdict.tag}' not found in '${verdict.repository}'.`,
           vscode.DiagnosticSeverity.Error
         )
@@ -238,7 +251,7 @@ function diagnosticsFor(document: vscode.TextDocument, checks: readonly Referenc
 }
 
 /** Which mark an outcome renders as. Exhaustive, so a new verdict kind fails the build. */
-function markKindOf(verdict: ImageVerdict): MarkKind {
+function markKindOf(verdict: ReferenceVerdict): MarkKind {
   switch (verdict.kind) {
     case 'exists':
       return 'verified';
@@ -256,7 +269,7 @@ function markKindOf(verdict: ImageVerdict): MarkKind {
  * Today it can never differ; the registry override set that makes it
  * possible is a later ticket.
  */
-function registrySuffixOf(reference: TaggedImageReference, verdict: ImageVerdict): string {
+function registrySuffixOf(reference: ImageReference, verdict: ReferenceVerdict): string {
   if (verdict.kind !== 'exists' || verdict.registry === resolveExplicitHost(reference.repository.text)?.host) {
     return '';
   }
@@ -321,7 +334,10 @@ function applyMarks(
  */
 function hoverFor(document: vscode.TextDocument, position: vscode.Position, checks: readonly ReferenceCheck[]): vscode.Hover | undefined {
   const offset = document.offsetAt(position);
-  const check = checks.find(({ reference }) => containsOffset(reference.repository.range, offset) || containsOffset(reference.tag.range, offset));
+  const check = checks.find(
+    ({ reference }) =>
+      containsOffset(reference.repository.range, offset) || (reference.tag !== undefined && containsOffset(reference.tag.range, offset))
+  );
 
   if (check === undefined) {
     return undefined;

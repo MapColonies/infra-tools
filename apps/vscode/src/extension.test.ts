@@ -434,6 +434,31 @@ describe('extension', () => {
     ]);
   });
 
+  it('should mark a tagless reference as unchecked instead of dropping it silently', async () => {
+    const fetch = vi.fn();
+    activate(context, { fetch });
+
+    const taglessYaml = ['image:', '  repository: registry.example.com/svc', '  pullPolicy: IfNotPresent', ''].join('\n');
+    const document = createFakeDocument('/repo/chart/values.yaml', taglessYaml);
+    const editor = await openInVisibleEditor(document);
+    const [mark] = getLastDecorations(editor);
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mark?.renderOptions?.after?.contentText).toBe(' ?');
+    expect(getLastDiagnosticCollection()?.set).toHaveBeenCalledWith(document.uri, []);
+  });
+
+  it('should explain a tagless reference on hover', async () => {
+    const fetch = vi.fn();
+    activate(context, { fetch });
+
+    const taglessYaml = ['image:', '  repository: registry.example.com/svc', '  pullPolicy: IfNotPresent', ''].join('\n');
+    const document = createFakeDocument('/repo/chart/values.yaml', taglessYaml);
+    await openInVisibleEditor(document);
+
+    expect(getHoverText(hoverAt(document, taglessYaml.indexOf('registry.example.com/svc')))).toContain('no tag');
+  });
+
   it('should ignore a document that is not the conventional values file name', async () => {
     const fetch = vi.fn();
     activate(context, { fetch });
