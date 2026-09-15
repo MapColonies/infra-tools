@@ -41,6 +41,23 @@ function createFakeDocument(path: string, text: string, languageId = 'yaml'): vs
 
 const VALUES_YAML = ['image:', '  repository: docker.io/library/nginx', '  tag: 1.19', ''].join('\n');
 
+/** Three references whose outcomes differ, so one file exercises all three marks at once. */
+const MIXED_VALUES_YAML = [
+  'good:',
+  '  image:',
+  '    repository: registry.example.com/good',
+  '    tag: "1.0"',
+  'bad:',
+  '  image:',
+  '    repository: registry.example.com/bad',
+  '    tag: "2.0"',
+  'unknown:',
+  '  image:',
+  '    repository: registry.example.com/unknown',
+  '    tag: "3.0"',
+  '',
+].join('\n');
+
 /** A canned fetch `Response`-shaped object for the injected fetch fake. */
 function fakeFetchResponse(status: number, body: unknown = {}): { status: number; ok: boolean; json: () => Promise<unknown> } {
   return {
@@ -228,28 +245,32 @@ describe('extension', () => {
     expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
   });
 
-  it('should render no checkmark when the tag does not exist, leaving only the diagnostic', async () => {
+  it('should render a cross alongside the diagnostic when the tag does not exist', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
     activate(context, { fetch });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     const editor = await openInVisibleEditor(document);
+    const [mark] = getLastDecorations(editor);
 
-    expect(getLastDecorations(editor)).toEqual([]);
+    expect(mark?.renderOptions?.after?.contentText).toBe(' ✗');
+    expect(mark?.renderOptions?.after?.color).toEqual(new vscode.ThemeColor('errorForeground'));
 
     const diagnostic = getSingleDiagnostic(getLastDiagnosticCollection()?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined);
 
     expect(diagnostic.message).toContain('1.19');
   });
 
-  it('should render neither a checkmark nor a diagnostic when the reference is unverifiable', async () => {
+  it('should render a muted question mark and no diagnostic when the reference is unverifiable', async () => {
     const fetch = vi.fn().mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
     activate(context, { fetch });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     const editor = await openInVisibleEditor(document);
+    const [mark] = getLastDecorations(editor);
 
-    expect(getLastDecorations(editor)).toEqual([]);
+    expect(mark?.renderOptions?.after?.contentText).toBe(' ?');
+    expect(mark?.renderOptions?.after?.color).toEqual(new vscode.ThemeColor('descriptionForeground'));
     expect(getLastDiagnosticCollection()?.set).toHaveBeenCalledWith(document.uri, []);
   });
 
@@ -299,12 +320,10 @@ describe('extension', () => {
     expect(hoverAt(document, VALUES_YAML.indexOf('image:'))).toBeUndefined();
   });
 
-  it('should create the checkmark decoration type and register a yaml hover provider on activate', () => {
+  it('should create one mark decoration type and register a yaml hover provider on activate', () => {
     activate(context, { fetch: vi.fn() });
 
-    expect(vscode.window.createTextEditorDecorationType).toHaveBeenCalledWith({
-      after: { color: new vscode.ThemeColor('charts.green'), margin: '0 0 0 0.5em' },
-    });
+    expect(vscode.window.createTextEditorDecorationType).toHaveBeenCalledWith({ after: { margin: '0 0 0 0.5em' } });
     expect(vscode.languages.registerHoverProvider).toHaveBeenCalledWith({ language: 'yaml' }, expect.anything());
   });
 
@@ -386,6 +405,33 @@ describe('extension', () => {
     await emitDidChangeVisibleTextEditors([disposedEditor, survivingEditor]);
 
     expect(getLastDecorations(survivingEditor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
+  it('should mark every reference in one pass, whatever each outcome was', async () => {
+    // eslint-disable-next-line @typescript-eslint/promise-function-async -- canned per-URL responses, nothing to await
+    const fetch = vi.fn((url: string) => {
+      if (url.includes('/good/')) {
+        return Promise.resolve(fakeFetchResponse(200));
+      }
+
+      if (url.includes('/bad/')) {
+        return Promise.resolve(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
+      }
+
+      return Promise.reject(new Error('getaddrinfo ENOTFOUND'));
+    });
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', MIXED_VALUES_YAML);
+    const editor = await openInVisibleEditor(document);
+    const marks = getLastDecorations(editor);
+
+    expect(marks.map((mark) => mark.renderOptions?.after?.contentText)).toEqual([' ✓', ' ✗', ' ?']);
+    expect(marks.map((mark) => mark.renderOptions?.after?.color)).toEqual([
+      new vscode.ThemeColor('charts.green'),
+      new vscode.ThemeColor('errorForeground'),
+      new vscode.ThemeColor('descriptionForeground'),
+    ]);
   });
 
   it('should ignore a document that is not the conventional values file name', async () => {

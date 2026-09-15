@@ -4,7 +4,25 @@ import { checkImageExistence, resolveExplicitHost, type FetchLike, type ImageVer
 
 const DIAGNOSTIC_COLLECTION_NAME = 'infra-tools-images';
 
-const CHECKMARK = '✓';
+/** What a reference's inline mark says at a glance, before any hover. */
+type MarkKind = 'verified' | 'missing' | 'unchecked';
+
+/**
+ * The glyph and theme colour each outcome renders as.
+ *
+ * `unchecked` is deliberately muted and deliberately a question mark rather
+ * than a cross. It reports that the tool could not answer, which is a fact
+ * about the developer's machine, not a defect in the file. Styling it like
+ * an error would recreate exactly the cry-wolf problem the unverifiable
+ * verdict exists to prevent. It still has to render something, because a
+ * reference with no mark at all is indistinguishable from an extension that
+ * never ran.
+ */
+const MARKS: Record<MarkKind, { readonly glyph: string; readonly color: string }> = {
+  verified: { glyph: '✓', color: 'charts.green' },
+  missing: { glyph: '✗', color: 'errorForeground' },
+  unchecked: { glyph: '?', color: 'descriptionForeground' },
+};
 
 // A table rather than a switch, so adding a reason to `UnverifiableReason`
 // fails the build here instead of silently hovering with no explanation.
@@ -65,16 +83,13 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
 
   const checksByDocument = new Map<string, DocumentChecks>();
 
-  // `contentText` is per-decoration because it names the answering registry
-  // when that differs from the host the file names; everything shared lives
-  // on the one type.
-  const checkmarkDecorationType = vscode.window.createTextEditorDecorationType({
-    after: {
-      color: new vscode.ThemeColor('charts.green'),
-      margin: '0 0 0 0.5em',
-    },
+  // Glyph and colour both ride on each decoration, since both vary per
+  // outcome; only the gap from the value is shared, so one type covers all
+  // three marks and one `setDecorations` call per editor replaces the lot.
+  const markDecorationType = vscode.window.createTextEditorDecorationType({
+    after: { margin: '0 0 0 0.5em' },
   });
-  context.subscriptions.push(checkmarkDecorationType);
+  context.subscriptions.push(markDecorationType);
 
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(async (document) => {
@@ -93,7 +108,7 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
 
         checksByDocument.set(document.uri.toString(), checked);
         diagnostics.set(document.uri, diagnosticsFor(document, checksAsOf(checked, document)));
-        applyCheckmarks(vscode.window.visibleTextEditors, checksByDocument, checkmarkDecorationType);
+        applyMarks(vscode.window.visibleTextEditors, checksByDocument, markDecorationType);
       } catch (error) {
         channel.appendLine(`Checking image references in ${document.uri.toString()} failed: ${String(error)}`);
       }
@@ -118,7 +133,7 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   // stored checks are re-applied whenever the visible set changes.
   context.subscriptions.push(
     vscode.window.onDidChangeVisibleTextEditors((editors) => {
-      applyCheckmarks(editors, checksByDocument, checkmarkDecorationType);
+      applyMarks(editors, checksByDocument, markDecorationType);
     })
   );
 }
@@ -222,29 +237,48 @@ function diagnosticsFor(document: vscode.TextDocument, checks: readonly Referenc
   return fileDiagnostics;
 }
 
+/** Which mark an outcome renders as. Exhaustive, so a new verdict kind fails the build. */
+function markKindOf(verdict: ImageVerdict): MarkKind {
+  switch (verdict.kind) {
+    case 'exists':
+      return 'verified';
+    case 'repository-not-found':
+    case 'tag-not-found':
+      return 'missing';
+    case 'unverifiable':
+      return 'unchecked';
+  }
+}
+
 /**
- * The checkmarks a document's checks call for: one per reference that
- * exists, and nothing at all for any other verdict — an unverifiable
- * reference is not confirmation.
+ * The answering registry, named only when it differs from the host the file
+ * names, so the mark carries information instead of restating the line.
+ * Today it can never differ; the registry override set that makes it
+ * possible is a later ticket.
  */
-function checkmarksFor(document: vscode.TextDocument, checks: readonly ReferenceCheck[]): vscode.DecorationOptions[] {
+function registrySuffixOf(reference: TaggedImageReference, verdict: ImageVerdict): string {
+  if (verdict.kind !== 'exists' || verdict.registry === resolveExplicitHost(reference.repository.text)?.host) {
+    return '';
+  }
+
+  return ` ${verdict.registry}`;
+}
+
+/**
+ * The marks a document's checks call for: exactly one per checked reference,
+ * whatever the outcome. Colour rides on each decoration rather than on the
+ * decoration type so that all three marks share one type, and one
+ * `setDecorations` call per editor still replaces the lot.
+ */
+function marksFor(document: vscode.TextDocument, checks: readonly ReferenceCheck[]): vscode.DecorationOptions[] {
   const decorations: vscode.DecorationOptions[] = [];
 
   for (const { reference, verdict } of checks) {
-    if (verdict.kind !== 'exists') {
-      continue;
-    }
-
-    // Naming the registry only when it differs from the one the file names
-    // keeps the annotation informative instead of restating the line. Today
-    // it can never differ; the registry override set that makes it possible
-    // is a later ticket.
-    const namedHost = resolveExplicitHost(reference.repository.text)?.host;
-    const contentText = verdict.registry === namedHost ? ` ${CHECKMARK}` : ` ${CHECKMARK} ${verdict.registry}`;
+    const { glyph, color } = MARKS[markKindOf(verdict)];
 
     decorations.push({
       range: rangeOf(document, reference.repository.range),
-      renderOptions: { after: { contentText } },
+      renderOptions: { after: { contentText: ` ${glyph}${registrySuffixOf(reference, verdict)}`, color: new vscode.ThemeColor(color) } },
     });
   }
 
@@ -252,11 +286,11 @@ function checkmarksFor(document: vscode.TextDocument, checks: readonly Reference
 }
 
 /**
- * Re-applies each editor's stored checkmarks. An editor showing a checked
+ * Re-applies each editor's stored marks. An editor showing a checked
  * document always gets a `setDecorations` call, empty array included, so a
- * reference that stops verifying loses the checkmark it used to have.
+ * reference whose outcome changed loses the mark it used to have.
  */
-function applyCheckmarks(
+function applyMarks(
   editors: readonly vscode.TextEditor[],
   checksByDocument: ReadonlyMap<string, DocumentChecks>,
   decorationType: vscode.TextEditorDecorationType
@@ -269,7 +303,7 @@ function applyCheckmarks(
     }
 
     try {
-      editor.setDecorations(decorationType, checkmarksFor(editor.document, checksAsOf(checked, editor.document)));
+      editor.setDecorations(decorationType, marksFor(editor.document, checksAsOf(checked, editor.document)));
     } catch {
       // An editor disposed between the check and this call throws here, and
       // this runs while editors are being torn down. One dead editor must
