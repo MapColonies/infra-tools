@@ -350,6 +350,44 @@ describe('extension', () => {
     expect(hoverAt(document, VALUES_YAML.indexOf('docker.io/library/nginx'))).toBeUndefined();
   });
 
+  it('should survive an editor disposed mid-check, since an unhandled rejection kills the extension host', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    const disposedEditor: TextEditorStub = {
+      document,
+      setDecorations: vi.fn(() => {
+        throw new Error('TextEditor#setDecorations: editor disposed');
+      }),
+    };
+
+    setVisibleTextEditors([disposedEditor]);
+
+    await expect(emitDidOpenTextDocument(document)).resolves.toBeUndefined();
+    expect(getLastDiagnosticCollection()?.set).toHaveBeenCalledWith(document.uri, []);
+  });
+
+  it('should still decorate the surviving editors when one of them was disposed', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    await openInVisibleEditor(document);
+
+    const disposedEditor: TextEditorStub = {
+      document,
+      setDecorations: vi.fn(() => {
+        throw new Error('TextEditor#setDecorations: editor disposed');
+      }),
+    };
+    const survivingEditor = createTextEditorStub(document);
+
+    await emitDidChangeVisibleTextEditors([disposedEditor, survivingEditor]);
+
+    expect(getLastDecorations(survivingEditor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
   it('should ignore a document that is not the conventional values file name', async () => {
     const fetch = vi.fn();
     activate(context, { fetch });

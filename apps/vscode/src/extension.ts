@@ -78,15 +78,25 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
 
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(async (document) => {
-      const checked = await checkImageReferencesInDocument(document, fetchImpl);
+      // VS Code never awaits an event listener, so anything escaping this
+      // async callback becomes an unhandled rejection, and an unhandled
+      // rejection takes the whole extension host down with it. Closing the
+      // tab mid-check is enough to do it: `setDecorations` throws on an
+      // editor that has since been disposed. Nothing this feature can fail
+      // at is worth a dead extension host.
+      try {
+        const checked = await checkImageReferencesInDocument(document, fetchImpl);
 
-      if (checked === undefined) {
-        return;
+        if (checked === undefined) {
+          return;
+        }
+
+        checksByDocument.set(document.uri.toString(), checked);
+        diagnostics.set(document.uri, diagnosticsFor(document, checksAsOf(checked, document)));
+        applyCheckmarks(vscode.window.visibleTextEditors, checksByDocument, checkmarkDecorationType);
+      } catch (error) {
+        channel.appendLine(`Checking image references in ${document.uri.toString()} failed: ${String(error)}`);
       }
-
-      checksByDocument.set(document.uri.toString(), checked);
-      diagnostics.set(document.uri, diagnosticsFor(document, checksAsOf(checked, document)));
-      applyCheckmarks(vscode.window.visibleTextEditors, checksByDocument, checkmarkDecorationType);
     })
   );
 
@@ -254,8 +264,17 @@ function applyCheckmarks(
   for (const editor of editors) {
     const checked = checksByDocument.get(editor.document.uri.toString());
 
-    if (checked !== undefined) {
+    if (checked === undefined) {
+      continue;
+    }
+
+    try {
       editor.setDecorations(decorationType, checkmarksFor(editor.document, checksAsOf(checked, editor.document)));
+    } catch {
+      // An editor disposed between the check and this call throws here, and
+      // this runs while editors are being torn down. One dead editor must
+      // not cost every other visible editor its checkmarks.
+      continue;
     }
   }
 }
