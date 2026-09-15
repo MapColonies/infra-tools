@@ -1,35 +1,47 @@
 import * as vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { emitDidOpenTextDocument, getLastDiagnosticCollection } from '../test/vscode-stub';
+import { bumpVersion, createFakeDocument } from '../test/fake-document';
+import { fakeFetchResponse } from '../test/fake-fetch';
+import {
+  createTextEditorStub,
+  emitDidChangeVisibleTextEditors,
+  emitDidOpenTextDocument,
+  getLastDiagnosticCollection,
+  getRegisteredHoverProvider,
+  setVisibleTextEditors,
+  type TextEditorStub,
+} from '../test/vscode-stub';
 import { activate, deactivate } from './extension';
 
-/** Builds a fake `vscode.TextDocument`, with a real `positionAt` so range assertions are exact. */
-function createFakeDocument(path: string, text: string, languageId = 'yaml'): vscode.TextDocument {
-  return {
-    uri: { path, toString: () => path },
-    languageId,
-    getText: () => text,
-    positionAt: (offset: number) => {
-      const before = text.slice(0, offset);
-      const lines = before.split('\n');
-      const line = lines.length - 1;
-      const character = lines[lines.length - 1]?.length ?? 0;
+const REPOSITORY = 'docker.io/library/nginx';
+const TAG = '1.19';
+const VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, `  tag: ${TAG}`, ''].join('\n');
 
-      return new vscode.Position(line, character);
-    },
-  } as unknown as vscode.TextDocument;
+/** Stages `document` as the only visible editor, then fires the open event. */
+async function openInVisibleEditor(document: vscode.TextDocument): Promise<TextEditorStub> {
+  const editor = createTextEditorStub(document);
+
+  setVisibleTextEditors([editor]);
+  await emitDidOpenTextDocument(document);
+
+  return editor;
 }
 
-const VALUES_YAML = ['image:', '  repository: docker.io/library/nginx', '  tag: 1.19', ''].join('\n');
+/** The decoration options an editor's most recent `setDecorations` call carried. */
+function getLastDecorations(editor: TextEditorStub): vscode.DecorationOptions[] {
+  const { calls } = editor.setDecorations.mock;
+  const lastCall = calls[calls.length - 1] as [unknown, vscode.DecorationOptions[]] | undefined;
 
-/** A canned fetch `Response`-shaped object for the injected fetch fake. */
-function fakeFetchResponse(status: number, body: unknown = {}): { status: number; ok: boolean; json: () => Promise<unknown> } {
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    // eslint-disable-next-line @typescript-eslint/promise-function-async -- trivial canned response, nothing to await
-    json: () => Promise.resolve(body),
-  };
+  if (lastCall === undefined) {
+    throw new Error('expected setDecorations to have been called');
+  }
+
+  return lastCall[1];
+}
+
+/** Asks the registered hover provider for a hover at `offset` in `document`. */
+function hoverAt(document: vscode.TextDocument, offset: number): vscode.Hover | undefined {
+  return getRegisteredHoverProvider()?.provideHover(document, document.positionAt(offset)) as vscode.Hover | undefined;
 }
 
 /** Asserts a diagnostics `.set()` call carried exactly one diagnostic, and returns it. */
@@ -61,6 +73,8 @@ describe('extension', () => {
     for (const subscription of context.subscriptions) {
       subscription.dispose();
     }
+
+    setVisibleTextEditors([]);
   });
 
   it('should create an output channel and register it for disposal on activate', () => {
@@ -74,84 +88,83 @@ describe('extension', () => {
     expect(() => deactivate()).not.toThrow();
   });
 
-  it('should set no diagnostics when the referenced image exists', async () => {
-    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
-    activate(context, { fetch });
+  it('should register a yaml hover provider on activate', () => {
+    activate(context, { fetch: vi.fn() });
 
-    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
-    await emitDidOpenTextDocument(document);
-
-    const collection = getLastDiagnosticCollection();
-
-    expect(collection?.set).toHaveBeenCalledWith(document.uri, []);
+    expect(vscode.languages.registerHoverProvider).toHaveBeenCalledWith({ language: 'yaml' }, expect.anything());
   });
 
-  it('should set an error diagnostic naming the missing tag, positioned on the tag value, when the tag does not exist', async () => {
+  it('should create one mark decoration type on activate', () => {
+    activate(context, { fetch: vi.fn() });
+
+    expect(vscode.window.createTextEditorDecorationType).toHaveBeenCalledWith({ after: { margin: '0 0 0 0.5em' } });
+  });
+
+  it('should set both diagnostics and marks when a values file opens', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
     activate(context, { fetch });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
-    await emitDidOpenTextDocument(document);
-
-    const collection = getLastDiagnosticCollection();
-    const diagnostic = getSingleDiagnostic(collection?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined);
+    const editor = await openInVisibleEditor(document);
+    const diagnostic = getSingleDiagnostic(getLastDiagnosticCollection()?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined);
 
     expect(diagnostic.severity).toBe(vscode.DiagnosticSeverity.Error);
-    expect(diagnostic.message).toContain('1.19');
-
-    const tagStart = VALUES_YAML.indexOf('1.19');
-
-    expect(diagnostic.range).toEqual(new vscode.Range(document.positionAt(tagStart), document.positionAt(tagStart + '1.19'.length)));
+    expect(diagnostic.message).toContain(TAG);
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✗');
   });
 
-  it('should set an error diagnostic naming the missing repository when the repository does not exist', async () => {
-    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'NAME_UNKNOWN' }] }));
+  it('should hover a checked reference, and stop once the document has been edited past the check', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
     activate(context, { fetch });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
-    await emitDidOpenTextDocument(document);
+    await openInVisibleEditor(document);
 
-    const collection = getLastDiagnosticCollection();
-    const diagnostic = getSingleDiagnostic(collection?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined);
+    expect(hoverAt(document, VALUES_YAML.indexOf(REPOSITORY))).toBeDefined();
 
-    expect(diagnostic.severity).toBe(vscode.DiagnosticSeverity.Error);
-    expect(diagnostic.message).toContain('docker.io/library/nginx');
+    bumpVersion(document);
 
-    const repositoryStart = VALUES_YAML.indexOf('docker.io/library/nginx');
-
-    expect(diagnostic.range).toEqual(
-      new vscode.Range(document.positionAt(repositoryStart), document.positionAt(repositoryStart + 'docker.io/library/nginx'.length))
-    );
+    expect(hoverAt(document, VALUES_YAML.indexOf(REPOSITORY))).toBeUndefined();
   });
 
-  it('should set no diagnostics when the registry is unreachable, since unverifiable never renders as an error', async () => {
-    const fetch = vi.fn().mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
+  it('should re-apply marks to an editor that becomes visible after the document was checked', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
     activate(context, { fetch });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+
+    setVisibleTextEditors([]);
     await emitDidOpenTextDocument(document);
 
-    const collection = getLastDiagnosticCollection();
+    const editor = createTextEditorStub(document);
+    await emitDidChangeVisibleTextEditors([editor]);
 
-    expect(collection?.set).toHaveBeenCalledWith(document.uri, []);
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
   });
 
-  it('should ignore a document that is not the conventional values file name', async () => {
+  it('should survive an editor disposed mid-check, since an unhandled rejection kills the extension host', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    const disposedEditor: TextEditorStub = {
+      document,
+      setDecorations: vi.fn(() => {
+        throw new Error('TextEditor#setDecorations: editor disposed');
+      }),
+    };
+
+    setVisibleTextEditors([disposedEditor]);
+
+    await expect(emitDidOpenTextDocument(document)).resolves.toBeUndefined();
+    expect(getLastDiagnosticCollection()?.set).toHaveBeenCalledWith(document.uri, []);
+  });
+
+  it('should issue no request for a document that is not a values file', async () => {
     const fetch = vi.fn();
     activate(context, { fetch });
 
-    const document = createFakeDocument('/repo/chart/deployment.yaml', VALUES_YAML);
-    await emitDidOpenTextDocument(document);
-
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it('should ignore a document whose language is not yaml', async () => {
-    const fetch = vi.fn();
-    activate(context, { fetch });
-
-    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML, 'plaintext');
-    await emitDidOpenTextDocument(document);
+    await emitDidOpenTextDocument(createFakeDocument('/repo/chart/deployment.yaml', VALUES_YAML));
 
     expect(fetch).not.toHaveBeenCalled();
   });
