@@ -50,14 +50,10 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, fet
 
   const version = document.version;
 
-  let references: ImageReference[];
-  try {
-    references = extractImageReferences(document.getText());
-  } catch {
-    // A YAML syntax error is the YAML language service's to raise, not this
-    // feature's. Stay silent rather than compete with it.
-    return undefined;
-  }
+  // No guard around this: the extractor collects YAML syntax errors rather
+  // than throwing, so a malformed file yields whatever it could salvage. The
+  // open listener's own catch covers a genuine fault.
+  const references = extractImageReferences(document.getText());
 
   // A tagless reference has nothing to ask a registry until `appVersion`
   // resolution lands, but it still comes through as a check. Dropping it is
