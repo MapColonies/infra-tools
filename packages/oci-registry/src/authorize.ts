@@ -22,7 +22,7 @@ const FORM_CONTENT_TYPE = 'application/x-www-form-urlencoded';
 
 // Hosts a plaintext token endpoint is tolerated on. A local registry has no
 // certificate and nothing it is told leaves the machine, and `localhost` is
-// already a first-class registry host in `resolve-explicit-host`.
+// already a first-class registry host in `resolve-reference`.
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 type BasicCredential = Extract<RegistryCredential, { readonly kind: 'basic' }>;

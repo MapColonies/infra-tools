@@ -172,6 +172,114 @@ describe('extractImageReferences', () => {
     });
   });
 
+  describe('registry', () => {
+    it('should report a sibling registry key as the reference registry', () => {
+      const source = ['image:', '  repository: my-service', '  registry: sibling.example.com', ''].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBe('sibling.example.com');
+    });
+
+    it('should apply a top-level registry key to a reference with no sibling registry', () => {
+      const source = ['registry: top.example.com', 'image:', '  repository: my-service', '  tag: 1.0', ''].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBe('top.example.com');
+    });
+
+    it('should prefer global.imageRegistry over a top-level registry', () => {
+      const source = ['global:', '  imageRegistry: global.example.com', 'registry: top.example.com', 'image:', '  repository: my-service', ''].join(
+        '\n'
+      );
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBe('global.example.com');
+    });
+
+    it('should apply global.registry when global.imageRegistry is absent', () => {
+      const source = ['global:', '  registry: global.example.com', 'image:', '  repository: my-service', ''].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBe('global.example.com');
+    });
+
+    it('should prefer a sibling registry over a document-level one', () => {
+      const source = [
+        'global:',
+        '  imageRegistry: global.example.com',
+        'image:',
+        '  repository: my-service',
+        '  registry: sibling.example.com',
+        '',
+      ].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBe('sibling.example.com');
+    });
+
+    it('should fall through to the document-level registry when the sibling registry is templated', () => {
+      const source = [
+        'global:',
+        '  imageRegistry: global.example.com',
+        'image:',
+        '  repository: my-service',
+        '  registry: "{{ .Values.global.registry }}"',
+        '',
+      ].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBe('global.example.com');
+    });
+
+    it('should fall through to the next document-level path when the first holds a non-scalar value', () => {
+      const source = [
+        'global:',
+        '  imageRegistry:',
+        '    host: global.example.com',
+        'registry: top.example.com',
+        'image:',
+        '  repository: my-service',
+        '',
+      ].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBe('top.example.com');
+    });
+
+    it('should report no registry for a document that declares none', () => {
+      const source = ['image:', '  repository: docker.io/library/nginx', '  tag: 1.19', ''].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBeUndefined();
+    });
+
+    it('should report the registry as written, with one layer of quotes stripped', () => {
+      const source = ['image:', '  repository: my-service', '  registry: "myreg.example.com"', ''].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.registry).toBe('myreg.example.com');
+    });
+
+    it('should report the repository and tag unchanged for a reference under a declared registry', () => {
+      const source = ['global:', '  imageRegistry: global.example.com', 'image:', '  repository: my-service', '  tag: 1.10', ''].join('\n');
+
+      const [reference] = extractImageReferences(source);
+
+      expect(reference?.repository.text).toBe('my-service');
+      expect(reference?.tag?.text).toBe('1.10');
+      expect(reference?.registry).toBe('global.example.com');
+    });
+  });
+
   describe('Helm template syntax', () => {
     it('should produce no reference when the repository contains template syntax', () => {
       const source = ['image:', '  repository: "{{ .Values.global.registry }}/nginx"', '  tag: 1.19', ''].join('\n');

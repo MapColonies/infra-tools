@@ -27,6 +27,7 @@ function createCheck(verdict: ReferenceVerdict): ReferenceCheck {
     reference: {
       repository: { text: REPOSITORY, range: rangeOfText(REPOSITORY) },
       tag: { text: TAG, range: rangeOfText(TAG) },
+      registry: undefined,
     },
     verdict,
   };
@@ -79,6 +80,38 @@ describe('marks', () => {
 
     expect(namedHost?.renderOptions?.after?.contentText).toBe(' ✓');
     expect(otherHost?.renderOptions?.after?.contentText).toBe(' ✓ mirror.example.com');
+  });
+
+  it('should stay silent when the answering registry is the one the file declared', () => {
+    const declaredYaml = ['global:', '  imageRegistry: ghcr.io', 'image:', '  repository: my-org/svc', '  tag: "1.0"', ''].join('\n');
+    const document = createFakeDocument('/repo/chart/values.yaml', declaredYaml);
+    const start = declaredYaml.indexOf('my-org/svc');
+    const reference = {
+      repository: { text: 'my-org/svc', range: { start, end: start + 'my-org/svc'.length } },
+      tag: undefined,
+      registry: 'ghcr.io',
+    };
+
+    const [mark] = marksFor(document, [{ reference, verdict: { kind: 'exists', registry: 'ghcr.io' } }]);
+
+    // The file says `ghcr.io` two lines up. Appending it restates the file.
+    expect(mark?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
+  it('should name the answering registry for a repository that names no host at all', () => {
+    const bareYaml = ['image:', '  repository: nginx', '  tag: "1.0"', ''].join('\n');
+    const document = createFakeDocument('/repo/chart/values.yaml', bareYaml);
+    const reference = {
+      repository: { text: 'nginx', range: { start: bareYaml.indexOf('nginx'), end: bareYaml.indexOf('nginx') + 'nginx'.length } },
+      tag: undefined,
+      registry: undefined,
+    };
+
+    const [mark] = marksFor(document, [{ reference, verdict: { kind: 'exists', registry: 'docker.io' } }]);
+
+    // A file that spells out no registry cannot have the answer restated to
+    // it, so naming Docker Hub is the only way the mark says where it looked.
+    expect(mark?.renderOptions?.after?.contentText).toBe(' ✓ docker.io');
   });
 
   it('should place the mark on the repository value', () => {

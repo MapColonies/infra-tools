@@ -3,7 +3,8 @@ import type { CredentialEnvironment, RegistryCredential } from './credentials';
 import { registryEndpoint } from './docker-hub';
 import { isPublicRegistry, resolveRegistryCredential } from './credentials';
 import type { FetchLike, FetchResponseLike } from './fetch-like';
-import { resolveExplicitHost } from './resolve-explicit-host';
+import { resolveReference } from './resolve-reference';
+import type { ResolvedReference } from './resolve-reference';
 import type { ImageVerdict } from './verdict';
 
 /**
@@ -31,6 +32,14 @@ const TAG_PATTERN = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$/;
 interface CheckImageExistenceParams {
   readonly repository: string;
   readonly tag: string;
+  /**
+   * A registry the caller found declared for this reference somewhere the
+   * repository string itself does not reach, or `undefined` when there is
+   * none. Required rather than optional so that a caller with nothing to say
+   * has to say so, instead of a forgotten field silently downgrading a
+   * resolvable reference into a Docker Hub guess.
+   */
+  readonly declaredRegistry: string | undefined;
   readonly fetch: FetchLike;
   readonly credentials: CredentialEnvironment;
 }
@@ -38,32 +47,58 @@ interface CheckImageExistenceParams {
 /**
  * Checks whether an image reference exists on a container registry.
  *
- * This is the package's single entry point: everything else — host
- * detection, credential resolution, the request shape, the distinction
+ * This is the package's single entry point: everything else — registry
+ * resolution, credential resolution, the request shape, the distinction
  * between a missing repository and a missing tag — is reached only through
  * here, on purpose, so a test asserts the requests issued and the verdict
  * returned rather than an internal function.
  *
- * Only a fully-qualified repository (one naming an explicit registry host)
- * is supported so far — no document/registry fallback, no Docker Hub
- * fallback. Credentials come from the local Docker config and nowhere else:
- * this package never prompts, and never invents one. Anything it cannot
- * resolve, reach, or interpret comes back as `'unverifiable'`, never as a
- * false negative.
+ * The registry is resolved in three steps: a host the repository names
+ * itself, else `declaredRegistry`, else Docker Hub. That last step is a
+ * guess, so a not-found from it is downgraded to `'guessed-registry'`, whose
+ * own doc comment in `verdict.ts` records why. A positive answer from the
+ * guess still stands, so public images keep verifying.
+ *
+ * Credentials come from the local Docker config and nowhere else: this
+ * package never prompts, and never invents one. Anything it cannot resolve,
+ * reach, or interpret comes back as `'unverifiable'`, never as a false
+ * negative.
  */
 async function checkImageExistence(params: CheckImageExistenceParams): Promise<ImageVerdict> {
-  const { repository, tag, fetch, credentials } = params;
-  const location = resolveExplicitHost(repository);
+  const { repository, tag, declaredRegistry, fetch, credentials } = params;
+  const reference = resolveReference(repository, declaredRegistry);
 
-  if (location === undefined) {
-    return { kind: 'unverifiable', reason: 'no-registry' };
-  }
-
-  if (!TAG_PATTERN.test(tag)) {
+  if (reference === undefined || !TAG_PATTERN.test(tag)) {
     return { kind: 'unverifiable', reason: 'malformed-reference' };
   }
 
-  const { host, name } = location;
+  const verdict = await checkResolvedReference({ repository, reference, tag, fetch, credentials });
+  const registryWasGuessed = reference.source === 'docker-hub-fallback';
+  const answeredNotFound = verdict.kind === 'repository-not-found' || verdict.kind === 'tag-not-found';
+
+  return registryWasGuessed && answeredNotFound ? { kind: 'unverifiable', reason: 'guessed-registry' } : verdict;
+}
+
+interface CheckResolvedReferenceParams {
+  /** The repository as the file wrote it, which is what a not-found verdict names. */
+  readonly repository: string;
+  readonly reference: ResolvedReference;
+  readonly tag: string;
+  readonly fetch: FetchLike;
+  readonly credentials: CredentialEnvironment;
+}
+
+/**
+ * Asks one registry about one reference.
+ *
+ * Split out so the guess-downgrade applies to a single returned verdict
+ * rather than to each not-found branch below. Spread across the branches,
+ * the rule would be one edit away from a 404 path that reports a missing
+ * image on the strength of a registry nobody named.
+ */
+async function checkResolvedReference(params: CheckResolvedReferenceParams): Promise<ImageVerdict> {
+  const { repository, reference, tag, fetch, credentials } = params;
+  const { host, name } = reference;
   const credential = await resolveRegistryCredential(host, credentials);
 
   // Resolved before the first request, not after a 401, because an

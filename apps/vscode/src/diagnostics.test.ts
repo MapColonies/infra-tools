@@ -13,7 +13,7 @@ const VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, `  tag: "${TAG}"`,
 // of going untested.
 const UNCHECKED_VERDICTS: Record<UncheckedReason, ReferenceVerdict> = {
   'no-tag': { kind: 'unverifiable', reason: 'no-tag' },
-  'no-registry': { kind: 'unverifiable', reason: 'no-registry' },
+  'guessed-registry': { kind: 'unverifiable', reason: 'guessed-registry' },
   'needs-login': { kind: 'unverifiable', reason: 'needs-login', registry: REPOSITORY },
   'authentication-failure': { kind: 'unverifiable', reason: 'authentication-failure' },
   'network-error': { kind: 'unverifiable', reason: 'network-error' },
@@ -41,6 +41,7 @@ function createCheck(verdict: ReferenceVerdict): ReferenceCheck {
     reference: {
       repository: { text: REPOSITORY, range: rangeOfText(REPOSITORY) },
       tag: { text: TAG, range: rangeOfText(TAG) },
+      registry: undefined,
     },
     verdict,
   };

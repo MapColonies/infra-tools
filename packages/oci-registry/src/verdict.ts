@@ -1,18 +1,19 @@
 /**
  * The reason an image's existence could not be determined.
  *
- * This list is expected to grow — the document/registry fallback chain and
- * the Docker Hub guess-downgrade rule from spec #17 each add reasons of
- * their own — but every reason, present or future, resolves to the same
- * {@link ImageVerdict} `'unverifiable'` kind. That is the whole point of the
- * shape: no caller can special-case a *reason* into rendering a diagnostic,
- * because only the verdict `kind` controls that.
+ * Every reason resolves to the same {@link ImageVerdict} `'unverifiable'`
+ * kind. That is the whole point of the shape: no caller can special-case a
+ * *reason* into rendering a diagnostic, because only the verdict `kind`
+ * controls that.
  */
 type UnverifiableReason =
-  /** The repository names no explicit registry host, and this package does
-   * not yet resolve one any other way (a document-declared registry, a
-   * workspace override set, or the Docker Hub fallback). */
-  | 'no-registry'
+  /** The repository named no registry and none was declared for it, so
+   * Docker Hub was guessed — and the guess answered not-found. That is no
+   * evidence the image is missing, only that this tool never knew where to
+   * look. A bare internal service name absent from Hub is the ordinary case
+   * in this organisation's charts, so reporting it as missing would be the
+   * false negative this reason exists to prevent. */
+  | 'guessed-registry'
   /** The registry is not one of the public ones, and no credential for it
    * could be resolved from the local Docker config. Distinct from
    * `'authentication-failure'` on purpose: this is the one reason a caller
@@ -29,9 +30,11 @@ type UnverifiableReason =
   | 'network-error'
   /** The registry responded, but not in a way this checker understands. */
   | 'unexpected-response'
-  /** The tag doesn't fit the OCI tag grammar. Rejected before any request is
-   * issued — building a manifest URL from an unvalidated tag is how a
-   * crafted values file smuggles a path traversal into the request. */
+  /** Some part of the reference is outside the grammar it has to satisfy: the
+   * tag, the repository name, or a registry declared for it. Rejected
+   * before any request is issued — building a manifest URL out of an
+   * unvalidated reference is how a crafted values file smuggles a path
+   * traversal, or a different host, into the request. */
   | 'malformed-reference';
 
 /**
@@ -54,7 +57,10 @@ type UnverifiableVerdict =
  * because the two failure modes are not interchangeable: `'unverifiable'`
  * must never be treated as evidence the image is missing. That invariant —
  * an unverifiable verdict produces no diagnostic — is the reason this type
- * exists in this shape rather than a simpler one.
+ * exists in this shape rather than a simpler one, and it is what the
+ * `'guessed-registry'` downgrade relies on: a not-found this package does
+ * not trust is moved into the kind that says nothing, which is only a safe
+ * move because that kind is guaranteed to stay silent.
  */
 type ImageVerdict =
   | { readonly kind: 'exists'; readonly registry: string }
