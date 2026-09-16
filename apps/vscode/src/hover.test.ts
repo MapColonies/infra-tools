@@ -15,12 +15,12 @@ const VERIFIED_VERDICT: ReferenceVerdict = { kind: 'exists', registry: 'mirror.e
 // the build here instead of hovering with someone else's explanation.
 const UNCHECKED_REASON_SENTENCES: Record<UncheckedReason, string> = {
   'no-tag': 'the reference names no tag to check.',
-  'no-registry': 'the repository names no registry host.',
+  'guessed-registry': 'nothing here names a registry, and Docker Hub — the only one left to try — does not have it.',
   'needs-login': 'no local Docker credential for that registry. Run `docker login` against it.',
   'authentication-failure': 'the registry refused the local Docker credential for it.',
   'network-error': 'the registry could not be reached.',
   'unexpected-response': 'the registry answered in a form this extension does not understand.',
-  'malformed-reference': 'the tag is not a valid OCI tag.',
+  'malformed-reference': 'the reference is not a valid image reference.',
 };
 
 /** The unverifiable verdict a reason produces. Only `needs-login` carries a registry, so the shape cannot be built generically. */

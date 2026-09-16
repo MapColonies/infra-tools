@@ -93,6 +93,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'docker.io/library/nginx',
       tag: '1.19',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -111,6 +112,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'docker.io/library/nginx',
       tag: '1.19',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -132,6 +134,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'ghcr.io/example/does-not-exist',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -145,6 +148,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'docker.io/library/nginx',
       tag: 'does-not-exist',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -162,6 +166,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'docker.io/library/nginx',
       tag: '1.19',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -175,6 +180,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -189,6 +195,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -202,6 +209,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'docker.io/library/nginx',
       tag: '1.19',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -209,41 +217,214 @@ describe('checkImageExistence', () => {
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'unexpected-response' });
   });
 
-  it('should report unverifiable without issuing a request when the repository names no explicit host', async () => {
-    const fetch = vi.fn<FetchLike>();
+  it('should send a repository that names no registry to Docker Hub, under the library namespace a single-segment name lives in', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
 
-    const verdict = await checkImageExistence({ repository: 'nginx', tag: 'latest', fetch, credentials: fakeDockerCredentials() });
+    const verdict = await checkImageExistence({
+      repository: 'nginx',
+      tag: 'latest',
+      documentRegistry: undefined,
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
 
-    expect(fetch).not.toHaveBeenCalled();
-    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'no-registry' });
+    expect(requestAt(fetch.mock.calls, 0).url).toBe('https://registry-1.docker.io/v2/library/nginx/manifests/latest');
+    expect(verdict).toEqual({ kind: 'exists', registry: 'docker.io' });
   });
 
-  it('should report unverifiable without issuing a request when the host segment smuggles userinfo', async () => {
+  it('should prefix the library namespace onto a single-segment name a repository qualifies with docker.io itself', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
+
+    const verdict = await checkImageExistence({
+      repository: 'docker.io/nginx',
+      tag: '1.19',
+      documentRegistry: undefined,
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    // Docker's normalization is a property of Hub, not of how the host was
+    // arrived at: `docker.io/nginx` addresses the same repository the bare
+    // `nginx` does.
+    expect(requestAt(fetch.mock.calls, 0).url).toBe('https://registry-1.docker.io/v2/library/nginx/manifests/1.19');
+    expect(verdict).toEqual({ kind: 'exists', registry: 'docker.io' });
+  });
+
+  it('should request a repository that names no registry against the one the document declares', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
+
+    const verdict = await checkImageExistence({
+      repository: 'example/app',
+      tag: '1.0.0',
+      documentRegistry: 'ghcr.io',
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestAt(fetch.mock.calls, 0).url).toBe('https://ghcr.io/v2/example/app/manifests/1.0.0');
+    expect(verdict).toEqual({ kind: 'exists', registry: 'ghcr.io' });
+  });
+
+  it('should prefer a host the repository names over the registry the document declares', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
+
+    const verdict = await checkImageExistence({
+      repository: 'quay.io/example/app',
+      tag: '1.0.0',
+      documentRegistry: 'ghcr.io',
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestAt(fetch.mock.calls, 0).url).toBe('https://quay.io/v2/example/app/manifests/1.0.0');
+    expect(verdict).toEqual({ kind: 'exists', registry: 'quay.io' });
+  });
+
+  it('should treat localhost:5000 as a host the repository names rather than a name on the document registry', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
+
+    const verdict = await checkImageExistence({
+      repository: 'localhost:5000/svc',
+      tag: '1.0.0',
+      documentRegistry: 'ghcr.io',
+      fetch,
+      credentials: fakeDockerCredentials({ config: { auths: { 'localhost:5000': { auth: encodeAuth('dev', 's3cret') } } } }),
+    });
+
+    expect(requestAt(fetch.mock.calls, 0).url).toBe('https://localhost:5000/v2/svc/manifests/1.0.0');
+    expect(verdict).toEqual({ kind: 'exists', registry: 'localhost:5000' });
+  });
+
+  it('should treat a first segment with no dot, colon, or localhost as a namespace rather than a host', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
+
+    const verdict = await checkImageExistence({
+      repository: 'bitnami/nginx',
+      tag: '1.19',
+      documentRegistry: undefined,
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    // `bitnami` is a Hub namespace. Reading it as a host would send the
+    // request to a machine that does not exist, and the library prefix would
+    // wrongly apply to a name that already has two segments.
+    expect(requestAt(fetch.mock.calls, 0).url).toBe('https://registry-1.docker.io/v2/bitnami/nginx/manifests/1.19');
+    expect(verdict).toEqual({ kind: 'exists', registry: 'docker.io' });
+  });
+
+  it('should report guessed-registry, never tag-not-found, when the guessed Docker Hub answers MANIFEST_UNKNOWN', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 404, body: distributionError('MANIFEST_UNKNOWN') }));
+
+    const verdict = await checkImageExistence({
+      repository: 'discrete-agent',
+      tag: 'v3.2.1',
+      documentRegistry: undefined,
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    // Nothing in the file named Hub. An internal service absent from it is
+    // the common case in this organisation's charts, so the 404 is evidence
+    // about the guess, not about the image.
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'guessed-registry' });
+  });
+
+  it('should report guessed-registry, never repository-not-found, when the guessed Docker Hub answers NAME_UNKNOWN', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 404, body: distributionError('NAME_UNKNOWN') }));
+
+    const verdict = await checkImageExistence({
+      repository: 'discrete-agent',
+      tag: 'v3.2.1',
+      documentRegistry: undefined,
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'guessed-registry' });
+  });
+
+  it('should report repository-not-found when a document-declared registry answers NAME_UNKNOWN, which is not a guess', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 404, body: distributionError('NAME_UNKNOWN') }));
+
+    const verdict = await checkImageExistence({
+      repository: 'example/does-not-exist',
+      tag: '1.0.0',
+      documentRegistry: 'ghcr.io',
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    // The document said where to look, so a not-found from there is the
+    // answer to the question the file asked. Downgrading it too would leave
+    // the checker unable to report a missing image at all.
+    expect(verdict).toEqual({ kind: 'repository-not-found', repository: 'example/does-not-exist' });
+  });
+
+  it('should report malformed-reference without issuing a request when the repository fits no valid name grammar', async () => {
+    const fetch = vi.fn<FetchLike>();
+
+    const verdict = await checkImageExistence({
+      repository: 'Not A Name',
+      tag: '1.0.0',
+      documentRegistry: 'ghcr.io',
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'malformed-reference' });
+  });
+
+  it('should report malformed-reference without issuing a request when the document registry is not a valid host', async () => {
+    const fetch = vi.fn<FetchLike>();
+
+    const verdict = await checkImageExistence({
+      repository: 'example/app',
+      tag: '1.0.0',
+      documentRegistry: 'https://registry.example.com',
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    // Falling back to Hub here would answer a question about a registry the
+    // document did name, and `https://…` reaches `fetch` as userinfo if it
+    // is pasted into the URL template unchecked.
+    expect(fetch).not.toHaveBeenCalled();
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'malformed-reference' });
+  });
+
+  it('should report malformed-reference without issuing a request when the host segment smuggles userinfo', async () => {
     const fetch = vi.fn<FetchLike>();
 
     const verdict = await checkImageExistence({
       repository: 'docker.io@evil.example/library/nginx',
       tag: '1.19',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
 
     expect(fetch).not.toHaveBeenCalled();
-    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'no-registry' });
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'malformed-reference' });
   });
 
-  it('should report unverifiable without issuing a request when a name component is a dot-segment', async () => {
+  it('should report malformed-reference without issuing a request when a name component is a dot-segment', async () => {
     const fetch = vi.fn<FetchLike>();
 
     const verdict = await checkImageExistence({
       repository: 'docker.io/../secrets',
       tag: '1.19',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
 
+    // The rejected explicit host must not fall through to the Hub guess:
+    // the whole string is then offered as a name, and `..` has to fail that
+    // grammar too or the traversal arrives at Hub instead.
     expect(fetch).not.toHaveBeenCalled();
-    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'no-registry' });
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'malformed-reference' });
   });
 
   it('should report unverifiable without issuing a request when the tag does not fit the OCI tag grammar', async () => {
@@ -252,6 +433,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'docker.io/library/nginx',
       tag: '../../other',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -276,6 +458,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -315,6 +498,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', auths: { 'https://private.example.com': {} } },
@@ -350,6 +534,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', credHelpers: { 'private.example.com': 'acr-env' } },
@@ -384,6 +569,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({
         config: {
@@ -427,6 +613,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'myorg.azurecr.io/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({
         config: {
@@ -475,6 +662,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -503,6 +691,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 'expired') } } } }),
     });
@@ -516,6 +705,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -535,6 +725,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -557,6 +748,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'localhost:5000/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'localhost:5000': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -584,6 +776,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } },
@@ -612,6 +805,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'docker.io/library/nginx',
       tag: '1.19',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({
         config: { auths: { 'https://index.docker.io/v1/': { auth: encodeAuth('hub-user', 'hub-secret') } } },
@@ -650,6 +844,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'myorg.azurecr.io/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({
         config: {
@@ -677,6 +872,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -714,6 +910,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({ config: { credHelpers: { 'private.example.com': 'acr-env' } }, runCredentialHelper }),
     });
@@ -736,6 +933,7 @@ describe('checkImageExistence', () => {
     const verdict = await checkImageExistence({
       repository: 'private.example.com/app',
       tag: '1.0.0',
+      documentRegistry: undefined,
       fetch,
       credentials: fakeDockerCredentials({
         configText: `{ "auths": { "private.example.com": { "auth": "${encodeAuth('dev', 's3cret')}" }, } }`,

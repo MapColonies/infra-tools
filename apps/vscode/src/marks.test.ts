@@ -82,6 +82,22 @@ describe('marks', () => {
     expect(otherHost?.renderOptions?.after?.contentText).toBe(' ✓ mirror.example.com');
   });
 
+  it('should name the answering registry for a repository that names no host at all', () => {
+    const bareYaml = ['image:', '  repository: nginx', '  tag: "1.0"', ''].join('\n');
+    const document = createFakeDocument('/repo/chart/values.yaml', bareYaml);
+    const reference = {
+      repository: { text: 'nginx', range: { start: bareYaml.indexOf('nginx'), end: bareYaml.indexOf('nginx') + 'nginx'.length } },
+      tag: undefined,
+      registry: undefined,
+    };
+
+    const [mark] = marksFor(document, [{ reference, verdict: { kind: 'exists', registry: 'docker.io' } }]);
+
+    // A file that spells out no registry cannot have the answer restated to
+    // it, so naming Docker Hub is the only way the mark says where it looked.
+    expect(mark?.renderOptions?.after?.contentText).toBe(' ✓ docker.io');
+  });
+
   it('should place the mark on the repository value', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     const [mark] = marksFor(document, [createCheck(VERIFIED_VERDICT)]);

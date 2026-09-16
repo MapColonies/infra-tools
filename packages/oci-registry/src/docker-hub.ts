@@ -22,6 +22,12 @@ const DOCKER_HUB_ENDPOINT = 'registry-1.docker.io';
 // bare host would be a cache miss in every helper a real developer has.
 const DOCKER_HUB_SERVER_URL = 'https://index.docker.io/v1/';
 
+// The namespace Hub files an official image under. `nginx` is only ever a
+// spelling of `library/nginx`; the distribution API knows the long form
+// alone and answers the short one with a 404 that reads exactly like a
+// missing image.
+const DOCKER_HUB_LIBRARY_NAMESPACE = 'library';
+
 const DOCKER_HUB_ALIASES = new Set([DOCKER_HUB_HOST, 'index.docker.io', DOCKER_HUB_ENDPOINT]);
 
 function isDockerHub(host: string): boolean {
@@ -40,4 +46,4 @@ function registryEndpoint(host: string): string {
   return isDockerHub(host) ? DOCKER_HUB_ENDPOINT : host;
 }
 
-export { DOCKER_HUB_HOST, DOCKER_HUB_SERVER_URL, isDockerHub, registryEndpoint };
+export { DOCKER_HUB_HOST, DOCKER_HUB_LIBRARY_NAMESPACE, DOCKER_HUB_SERVER_URL, isDockerHub, registryEndpoint };

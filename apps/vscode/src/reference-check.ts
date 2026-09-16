@@ -78,7 +78,13 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, dep
       verdict:
         reference.tag === undefined
           ? ({ kind: 'unverifiable', reason: 'no-tag' } as const)
-          : await checkImageExistence({ repository: reference.repository.text, tag: reference.tag.text, fetch, credentials }),
+          : await checkImageExistence({
+              repository: reference.repository.text,
+              tag: reference.tag.text,
+              documentRegistry: reference.registry?.text,
+              fetch,
+              credentials,
+            }),
     }))
   );
 
