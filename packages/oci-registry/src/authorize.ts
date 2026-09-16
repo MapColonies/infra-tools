@@ -248,4 +248,3 @@ async function acquireBearerToken(params: AcquireBearerTokenParams): Promise<str
 }
 
 export { acquireBearerToken, basicAuthorizationHeader, parseAuthenticateChallenge };
-export type { AuthChallenge, BasicCredential };
