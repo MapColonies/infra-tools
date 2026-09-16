@@ -2,6 +2,7 @@ import type * as vscode from 'vscode';
 import { describe, expect, it, vi } from 'vitest';
 import type { FetchLike } from 'oci-registry';
 import { bumpVersion, createFakeDocument } from '../test/fake-document';
+import { noDockerCredentials } from '../test/fake-credentials';
 import { fakeFetchResponse } from '../test/fake-fetch';
 import { checkImageReferencesInDocument, checksAsOf, isHelmValuesFile, type DocumentChecks } from './reference-check';
 
@@ -12,7 +13,7 @@ const TAGLESS_VALUES_YAML = ['image:', '  repository: registry.example.com/svc',
 
 /** Checks a document this feature is expected to have something to say about. */
 async function checkValuesFile(document: vscode.TextDocument, fetch: FetchLike): Promise<DocumentChecks> {
-  const checked = await checkImageReferencesInDocument(document, fetch);
+  const checked = await checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials });
 
   if (checked === undefined) {
     throw new Error('expected the document to be checked');
@@ -27,7 +28,7 @@ describe('reference-check', () => {
     const document = createFakeDocument('/repo/chart/deployment.yaml', VALUES_YAML);
 
     expect(isHelmValuesFile(document)).toBe(false);
-    await expect(checkImageReferencesInDocument(document, fetch)).resolves.toBeUndefined();
+    await expect(checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials })).resolves.toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -36,7 +37,7 @@ describe('reference-check', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML, 'plaintext');
 
     expect(isHelmValuesFile(document)).toBe(false);
-    await expect(checkImageReferencesInDocument(document, fetch)).resolves.toBeUndefined();
+    await expect(checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials })).resolves.toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
   });
 

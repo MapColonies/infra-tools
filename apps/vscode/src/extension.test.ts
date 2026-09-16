@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createFakeContext } from '../test/fake-context';
+import { noDockerCredentials } from '../test/fake-credentials';
 import { bumpVersion, createFakeDocument } from '../test/fake-document';
 import { fakeFetchResponse } from '../test/fake-fetch';
 import {
@@ -9,6 +11,8 @@ import {
   getLastDiagnosticCollection,
   getRegisteredHoverProvider,
   setVisibleTextEditors,
+  setWarningMessageAnswer,
+  window,
   type TextEditorStub,
 } from '../test/vscode-stub';
 import { activate, deactivate } from './extension';
@@ -66,7 +70,7 @@ describe('extension', () => {
   let context: vscode.ExtensionContext;
 
   beforeEach(() => {
-    context = { subscriptions: [] } as unknown as vscode.ExtensionContext;
+    context = createFakeContext();
   });
 
   afterEach(() => {
@@ -75,10 +79,12 @@ describe('extension', () => {
     }
 
     setVisibleTextEditors([]);
+    setWarningMessageAnswer(undefined);
+    window.showWarningMessage.mockClear();
   });
 
   it('should create an output channel and register it for disposal on activate', () => {
-    activate(context, { fetch: vi.fn() });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
 
     expect(vscode.window.createOutputChannel).toHaveBeenCalledWith('Infra Tools');
     expect(context.subscriptions.length).toBeGreaterThanOrEqual(1);
@@ -89,20 +95,20 @@ describe('extension', () => {
   });
 
   it('should register a yaml hover provider on activate', () => {
-    activate(context, { fetch: vi.fn() });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
 
     expect(vscode.languages.registerHoverProvider).toHaveBeenCalledWith({ language: 'yaml' }, expect.anything());
   });
 
   it('should create one mark decoration type on activate', () => {
-    activate(context, { fetch: vi.fn() });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
 
     expect(vscode.window.createTextEditorDecorationType).toHaveBeenCalledWith({ after: { margin: '0 0 0 0.5em' } });
   });
 
   it('should set both diagnostics and marks when a values file opens', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
-    activate(context, { fetch });
+    activate(context, { fetch, credentials: noDockerCredentials });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     const editor = await openInVisibleEditor(document);
@@ -115,7 +121,7 @@ describe('extension', () => {
 
   it('should hover a checked reference, and stop once the document has been edited past the check', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
-    activate(context, { fetch });
+    activate(context, { fetch, credentials: noDockerCredentials });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     await openInVisibleEditor(document);
@@ -129,7 +135,7 @@ describe('extension', () => {
 
   it('should re-apply marks to an editor that becomes visible after the document was checked', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
-    activate(context, { fetch });
+    activate(context, { fetch, credentials: noDockerCredentials });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
 
@@ -144,7 +150,7 @@ describe('extension', () => {
 
   it('should survive an editor disposed mid-check, since an unhandled rejection kills the extension host', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
-    activate(context, { fetch });
+    activate(context, { fetch, credentials: noDockerCredentials });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     const disposedEditor: TextEditorStub = {
@@ -160,9 +166,47 @@ describe('extension', () => {
     expect(getLastDiagnosticCollection()?.set).toHaveBeenCalledWith(document.uri, []);
   });
 
+  it('should create a status bar item on activate', () => {
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
+
+    expect(vscode.window.createStatusBarItem).toHaveBeenCalled();
+  });
+
+  it('should notify, and raise no diagnostic, for a registry with no local credential', async () => {
+    const fetch = vi.fn();
+    activate(context, { fetch, credentials: noDockerCredentials });
+
+    const document = createFakeDocument(
+      '/repo/chart/values.yaml',
+      ['image:', '  repository: private.example.com/svc', '  tag: 1.0.0', ''].join('\n')
+    );
+    await openInVisibleEditor(document);
+
+    // `void`-ed in the listener, so the notification is raised during the
+    // check but its promise is not what the listener awaits.
+    expect(window.showWarningMessage).toHaveBeenCalledWith(expect.stringContaining('private.example.com'), expect.any(String), expect.any(String));
+
+    // A missing credential is a fact about this machine, not a defect in the
+    // file. Putting it in the Problems panel beside real errors is how a
+    // panel earns being ignored.
+    expect(getLastDiagnosticCollection()?.set).toHaveBeenCalledWith(document.uri, []);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('should notify once per registry across files, not once per file', async () => {
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
+
+    const values = ['image:', '  repository: private.example.com/svc', '  tag: 1.0.0', ''].join('\n');
+
+    await emitDidOpenTextDocument(createFakeDocument('/repo/chart-a/values.yaml', values));
+    await emitDidOpenTextDocument(createFakeDocument('/repo/chart-b/values.yaml', values));
+
+    expect(window.showWarningMessage).toHaveBeenCalledTimes(1);
+  });
+
   it('should issue no request for a document that is not a values file', async () => {
     const fetch = vi.fn();
-    activate(context, { fetch });
+    activate(context, { fetch, credentials: noDockerCredentials });
 
     await emitDidOpenTextDocument(createFakeDocument('/repo/chart/deployment.yaml', VALUES_YAML));
 

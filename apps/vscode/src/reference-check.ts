@@ -1,6 +1,6 @@
 import type * as vscode from 'vscode';
 import { extractImageReferences, type ImageReference } from 'helm';
-import { checkImageExistence, type FetchLike, type ImageVerdict, type UnverifiableReason } from 'oci-registry';
+import { checkImageExistence, type CredentialEnvironment, type FetchLike, type ImageVerdict, type UnverifiableReason } from 'oci-registry';
 
 // Matching any YAML file beneath a chart directory, and excluding that
 // chart's templates directory, is Helm chart-context knowledge this ticket
@@ -10,7 +10,15 @@ const VALUES_FILE_NAME_PATTERN = /^values\.ya?ml$/i;
 /** Every reason the registry package reports, plus the ones settled before asking it. */
 type UncheckedReason = UnverifiableReason | 'no-tag';
 
-type ReferenceVerdict = Exclude<ImageVerdict, { kind: 'unverifiable' }> | { readonly kind: 'unverifiable'; readonly reason: UncheckedReason };
+/**
+ * A registry verdict, or the one outcome the extension settles itself.
+ *
+ * `ImageVerdict` is taken whole rather than picked apart, so the registry
+ * package's own split — only `'needs-login'` carries a host — survives the
+ * trip to the UI instead of being flattened into an optional field the
+ * notification code would then have to re-check.
+ */
+type ReferenceVerdict = ImageVerdict | { readonly kind: 'unverifiable'; readonly reason: 'no-tag' };
 
 /**
  * One checked reference, projected onto all three surfaces, so diagnostics,
@@ -43,11 +51,17 @@ function isHelmValuesFile(document: vscode.TextDocument): boolean {
  * checked document that produced no findings: the caller replaces a
  * document's diagnostics and marks only when it gets checks back.
  */
-async function checkImageReferencesInDocument(document: vscode.TextDocument, fetch: FetchLike): Promise<DocumentChecks | undefined> {
+interface CheckDependencies {
+  readonly fetch: FetchLike;
+  readonly credentials: CredentialEnvironment;
+}
+
+async function checkImageReferencesInDocument(document: vscode.TextDocument, dependencies: CheckDependencies): Promise<DocumentChecks | undefined> {
   if (!isHelmValuesFile(document)) {
     return undefined;
   }
 
+  const { fetch, credentials } = dependencies;
   const version = document.version;
 
   // No guard around this: the extractor collects YAML syntax errors rather
@@ -64,7 +78,7 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, fet
       verdict:
         reference.tag === undefined
           ? ({ kind: 'unverifiable', reason: 'no-tag' } as const)
-          : await checkImageExistence({ repository: reference.repository.text, tag: reference.tag.text, fetch }),
+          : await checkImageExistence({ repository: reference.repository.text, tag: reference.tag.text, fetch, credentials }),
     }))
   );
 
@@ -80,5 +94,25 @@ function checksAsOf(checked: DocumentChecks, document: vscode.TextDocument): rea
   return checked.version === document.version ? checked.checks : [];
 }
 
-export { checkImageReferencesInDocument, checksAsOf, isHelmValuesFile };
+/**
+ * The distinct registries a document's checks could not reach for want of a
+ * login.
+ *
+ * Deduplicated here rather than by the caller, because a values file naming
+ * ten images on one private registry is the ordinary case, and ten identical
+ * prompts for it would be the feature's worst behaviour.
+ */
+function registriesNeedingLogin(checks: readonly ReferenceCheck[]): string[] {
+  const registries = new Set<string>();
+
+  for (const { verdict } of checks) {
+    if (verdict.kind === 'unverifiable' && verdict.reason === 'needs-login') {
+      registries.add(verdict.registry);
+    }
+  }
+
+  return [...registries];
+}
+
+export { checkImageReferencesInDocument, checksAsOf, isHelmValuesFile, registriesNeedingLogin };
 export type { DocumentChecks, ReferenceCheck, ReferenceVerdict, UncheckedReason };

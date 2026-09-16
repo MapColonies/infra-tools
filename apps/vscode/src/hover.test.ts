@@ -16,11 +16,17 @@ const VERIFIED_VERDICT: ReferenceVerdict = { kind: 'exists', registry: 'mirror.e
 const UNCHECKED_REASON_SENTENCES: Record<UncheckedReason, string> = {
   'no-tag': 'the reference names no tag to check.',
   'no-registry': 'the repository names no registry host.',
-  'missing-credential': 'the registry requires credentials this extension cannot supply yet.',
+  'needs-login': 'no local Docker credential for that registry. Run `docker login` against it.',
+  'authentication-failure': 'the registry refused the local Docker credential for it.',
   'network-error': 'the registry could not be reached.',
   'unexpected-response': 'the registry answered in a form this extension does not understand.',
   'malformed-reference': 'the tag is not a valid OCI tag.',
 };
+
+/** The unverifiable verdict a reason produces. Only `needs-login` carries a registry, so the shape cannot be built generically. */
+function unverifiableVerdict(reason: UncheckedReason): ReferenceVerdict {
+  return reason === 'needs-login' ? { kind: 'unverifiable', reason, registry: 'registry.example.com' } : { kind: 'unverifiable', reason };
+}
 
 /** The source range of `text`'s first occurrence in {@link VALUES_YAML}. */
 function rangeOfText(text: string): SourceRange {
@@ -80,7 +86,7 @@ describe('hover', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
 
     for (const [reason, sentence] of Object.entries(UNCHECKED_REASON_SENTENCES) as [UncheckedReason, string][]) {
-      const hoverText = getHoverText(hoverAtText(document, [createCheck({ kind: 'unverifiable', reason })], REPOSITORY));
+      const hoverText = getHoverText(hoverAtText(document, [createCheck(unverifiableVerdict(reason))], REPOSITORY));
 
       expect(hoverText).toBe(`Not verified: ${sentence}`);
     }

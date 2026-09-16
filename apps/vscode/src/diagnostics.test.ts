@@ -11,13 +11,14 @@ const VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, `  tag: "${TAG}"`,
 
 // A record rather than a list, so a new reason fails the build here instead
 // of going untested.
-const UNCHECKED_REASONS: Record<UncheckedReason, true> = {
-  'no-tag': true,
-  'no-registry': true,
-  'missing-credential': true,
-  'network-error': true,
-  'unexpected-response': true,
-  'malformed-reference': true,
+const UNCHECKED_VERDICTS: Record<UncheckedReason, ReferenceVerdict> = {
+  'no-tag': { kind: 'unverifiable', reason: 'no-tag' },
+  'no-registry': { kind: 'unverifiable', reason: 'no-registry' },
+  'needs-login': { kind: 'unverifiable', reason: 'needs-login', registry: REPOSITORY },
+  'authentication-failure': { kind: 'unverifiable', reason: 'authentication-failure' },
+  'network-error': { kind: 'unverifiable', reason: 'network-error' },
+  'unexpected-response': { kind: 'unverifiable', reason: 'unexpected-response' },
+  'malformed-reference': { kind: 'unverifiable', reason: 'malformed-reference' },
 };
 
 /** The source range of `text`'s first occurrence in {@link VALUES_YAML}. */
@@ -75,8 +76,8 @@ describe('diagnostics', () => {
   it('should report nothing for any unverifiable reason, since an unreachable registry is not a missing image', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
 
-    for (const reason of Object.keys(UNCHECKED_REASONS) as UncheckedReason[]) {
-      expect(diagnosticsFor(document, [createCheck({ kind: 'unverifiable', reason })])).toEqual([]);
+    for (const verdict of Object.values(UNCHECKED_VERDICTS)) {
+      expect(diagnosticsFor(document, [createCheck(verdict)])).toEqual([]);
     }
   });
 });
