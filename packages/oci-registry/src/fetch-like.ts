@@ -3,17 +3,20 @@
  * Deliberately narrow, and deliberately not the real `Response` type — that
  * would tie every caller and every test double to a global type this
  * workspace's `lib` doesn't even carry, for a package that only ever reads
- * three members off it.
+ * four members off it.
  */
 export interface FetchResponseLike {
   readonly status: number;
   readonly ok: boolean;
+  /** Structurally satisfied by the platform's `Headers`. */
+  readonly headers: { readonly get: (name: string) => string | null };
   readonly json: () => Promise<unknown>;
 }
 
 export interface FetchRequestInit {
   readonly method?: string;
   readonly headers?: Record<string, string>;
+  readonly body?: string;
 }
 
 /**
