@@ -45,17 +45,17 @@ function isHelmValuesFile(document: vscode.TextDocument): boolean {
   return VALUES_FILE_NAME_PATTERN.test(fileName);
 }
 
+interface CheckDependencies {
+  readonly fetch: FetchLike;
+  readonly credentials: CredentialEnvironment;
+}
+
 /**
  * Checks a document's image references. `undefined` means this feature has
  * nothing to say about the document at all, which is not the same as a
  * checked document that produced no findings: the caller replaces a
  * document's diagnostics and marks only when it gets checks back.
  */
-interface CheckDependencies {
-  readonly fetch: FetchLike;
-  readonly credentials: CredentialEnvironment;
-}
-
 async function checkImageReferencesInDocument(document: vscode.TextDocument, dependencies: CheckDependencies): Promise<DocumentChecks | undefined> {
   if (!isHelmValuesFile(document)) {
     return undefined;

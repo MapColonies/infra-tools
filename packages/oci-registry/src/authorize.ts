@@ -1,4 +1,5 @@
 import type { RegistryCredential } from './credentials';
+import { readStringField } from './read-json';
 import type { FetchLike } from './fetch-like';
 
 // Splits a `WWW-Authenticate` value into its scheme and the parameter list
@@ -63,19 +64,6 @@ interface RefreshTokenRequestParams extends TokenRequestParams {
 
 interface BasicTokenRequestParams extends TokenRequestParams {
   readonly credential: BasicCredential | undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function readStringProperty(source: unknown, property: string): string | undefined {
-  if (!isRecord(source)) {
-    return undefined;
-  }
-
-  const value = source[property];
-  return typeof value === 'string' ? value : undefined;
 }
 
 /**
@@ -193,7 +181,7 @@ async function requestTokenWithRefreshToken(params: RefreshTokenRequestParams): 
     return undefined;
   }
 
-  return readStringProperty(await response.json(), 'access_token');
+  return readStringField(await response.json(), 'access_token');
 }
 
 /**
@@ -217,7 +205,7 @@ async function requestTokenWithBasic(params: BasicTokenRequestParams): Promise<s
   }
 
   const body = await response.json();
-  return readStringProperty(body, 'token') ?? readStringProperty(body, 'access_token');
+  return readStringField(body, 'token') ?? readStringField(body, 'access_token');
 }
 
 /**

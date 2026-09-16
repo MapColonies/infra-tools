@@ -55,8 +55,12 @@ function createLoginPrompts(state: vscode.Memento): LoginPrompts {
   const promptStates = new Map<string, PromptState>(readDismissedRegistries(state).map((registry) => [registry, 'dismissed']));
   const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, STATUS_BAR_PRIORITY);
 
+  function registriesIn(wanted: PromptState): string[] {
+    return [...promptStates].filter(([, promptState]) => promptState === wanted).map(([registry]) => registry);
+  }
+
   function refreshStatusBar(): void {
-    const waiting = [...promptStates].filter(([, promptState]) => promptState === 'prompted').map(([registry]) => registry);
+    const waiting = registriesIn('prompted');
 
     if (waiting.length === 0) {
       statusBarItem.hide();
@@ -72,10 +76,7 @@ function createLoginPrompts(state: vscode.Memento): LoginPrompts {
     promptStates.set(registry, 'dismissed');
     refreshStatusBar();
 
-    return state.update(
-      DISMISSED_REGISTRIES_KEY,
-      [...promptStates].filter(([, promptState]) => promptState === 'dismissed').map(([key]) => key)
-    );
+    return state.update(DISMISSED_REGISTRIES_KEY, registriesIn('dismissed'));
   }
 
   function runLogin(registry: string): void {

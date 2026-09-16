@@ -8,7 +8,7 @@
  * shape: no caller can special-case a *reason* into rendering a diagnostic,
  * because only the verdict `kind` controls that.
  */
-export type UnverifiableReason =
+type UnverifiableReason =
   /** The repository names no explicit registry host, and this package does
    * not yet resolve one any other way (a document-declared registry, a
    * workspace override set, or the Docker Hub fallback). */
@@ -43,7 +43,7 @@ export type UnverifiableReason =
  * let a caller reach that reason without one, and no other reason can
  * pretend to have a host it never established.
  */
-export type UnverifiableVerdict =
+type UnverifiableVerdict =
   | { readonly kind: 'unverifiable'; readonly reason: 'needs-login'; readonly registry: string }
   | { readonly kind: 'unverifiable'; readonly reason: Exclude<UnverifiableReason, 'needs-login'> };
 
@@ -56,8 +56,10 @@ export type UnverifiableVerdict =
  * an unverifiable verdict produces no diagnostic — is the reason this type
  * exists in this shape rather than a simpler one.
  */
-export type ImageVerdict =
+type ImageVerdict =
   | { readonly kind: 'exists'; readonly registry: string }
   | { readonly kind: 'repository-not-found'; readonly repository: string }
   | { readonly kind: 'tag-not-found'; readonly repository: string; readonly tag: string }
   | UnverifiableVerdict;
+
+export type { ImageVerdict, UnverifiableReason };
