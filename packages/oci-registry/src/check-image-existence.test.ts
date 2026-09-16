@@ -344,6 +344,46 @@ describe('checkImageExistence', () => {
     expect(verdict).toEqual({ kind: 'exists', registry: 'private.example.com' });
   });
 
+  it('should fall through to the plaintext entry, not to the global credsStore, when a per-registry helper misses', async () => {
+    const runCredentialHelper = vi
+      .fn<CredentialEnvironment['runCredentialHelper']>()
+      .mockRejectedValue(new Error('credentials not found in native keychain'));
+    const fetch = vi
+      .fn<FetchLike>()
+      .mockResolvedValueOnce(
+        fakeFetchResponse({
+          status: 401,
+          body: {},
+          wwwAuthenticate: 'Bearer realm="https://private.example.com/oauth2/token",service="private.example.com"',
+        })
+      )
+      .mockResolvedValueOnce(fakeFetchResponse({ status: 200, body: { token: 'issued-token' } }))
+      .mockResolvedValueOnce(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
+
+    const verdict = await checkImageExistence({
+      repository: 'private.example.com/app',
+      tag: '1.0.0',
+      fetch,
+      credentials: dockerCredentials({
+        config: {
+          credsStore: 'desktop',
+          credHelpers: { 'private.example.com': 'acr-env' },
+          auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } },
+        },
+        runCredentialHelper,
+      }),
+    });
+
+    // Docker picks exactly one store per registry, so a `credHelpers` entry
+    // replaces the global one instead of being tried ahead of it. Asking
+    // `desktop` here would verify with a credential `docker pull` would
+    // never send.
+    expect(runCredentialHelper).toHaveBeenCalledTimes(1);
+    expect(runCredentialHelper).toHaveBeenCalledWith('acr-env', 'private.example.com');
+    expect(requestAt(fetch.mock.calls, 1).init.headers).toEqual({ authorization: `Basic ${encodeAuth('dev', 's3cret')}` });
+    expect(verdict).toEqual({ kind: 'exists', registry: 'private.example.com' });
+  });
+
   it('should exchange the identity token rather than the empty-password basic credential an ACR auth entry decodes to', async () => {
     const fetch = vi
       .fn<FetchLike>()
@@ -460,6 +500,48 @@ describe('checkImageExistence', () => {
     });
 
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'authentication-failure' });
+  });
+
+  it('should refuse a plaintext token endpoint rather than put the credential on the wire in the clear', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(
+      fakeFetchResponse({
+        status: 401,
+        body: {},
+        wwwAuthenticate: 'Bearer realm="http://private.example.com/oauth2/token",service="private.example.com"',
+      })
+    );
+
+    const verdict = await checkImageExistence({
+      repository: 'private.example.com/app',
+      tag: '1.0.0',
+      fetch,
+      credentials: dockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
+    });
+
+    // Whoever answered the manifest request chose that realm, and the
+    // request built from it is the one carrying the password.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'authentication-failure' });
+  });
+
+  it('should allow a plaintext token endpoint on loopback, where a local registry has no certificate', async () => {
+    const fetch = vi
+      .fn<FetchLike>()
+      .mockResolvedValueOnce(
+        fakeFetchResponse({ status: 401, body: {}, wwwAuthenticate: 'Bearer realm="http://localhost:5000/token",service="localhost:5000"' })
+      )
+      .mockResolvedValueOnce(fakeFetchResponse({ status: 200, body: { token: 'issued-token' } }))
+      .mockResolvedValueOnce(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
+
+    const verdict = await checkImageExistence({
+      repository: 'localhost:5000/app',
+      tag: '1.0.0',
+      fetch,
+      credentials: dockerCredentials({ config: { auths: { 'localhost:5000': { auth: encodeAuth('dev', 's3cret') } } } }),
+    });
+
+    expect(requestAt(fetch.mock.calls, 1).url).toBe('http://localhost:5000/token?service=localhost%3A5000&scope=repository%3Aapp%3Apull');
+    expect(verdict).toEqual({ kind: 'exists', registry: 'localhost:5000' });
   });
 
   it('should fall through to the plaintext auths entry when the credential helper rejects', async () => {

@@ -294,12 +294,15 @@ async function runHelper(params: RunHelperParams): Promise<RegistryCredential | 
  * Resolves the credential the local Docker setup holds for a registry, or
  * `undefined` when it holds none.
  *
- * The order — per-registry helper, then the global store, then the
- * plaintext `auths` entry — mirrors Docker's own precedence, so a developer
- * who can `docker pull` an image sees this package agree with their shell.
- * Each step falls through on a miss rather than failing, because a miss is
- * the normal state of a keychain that has only ever been asked about one
- * registry.
+ * The order mirrors Docker's own precedence, so a developer who can
+ * `docker pull` an image sees this package agree with their shell. Docker
+ * picks exactly one store per registry: a `credHelpers` entry naming this
+ * registry *replaces* the global `credsStore` rather than being tried ahead
+ * of it, and whichever one applies falls through on a miss to the plaintext
+ * `auths` entry — never to the other store. Trying both would let this
+ * package verify with a credential Docker itself would not use. The
+ * fall-through to `auths` is there because a miss is the normal state of a
+ * keychain that has only ever been asked about one registry.
  *
  * This function does not throw. Every failure mode it has — no config file,
  * unparseable config, a helper that crashes — means the same thing to the
@@ -320,14 +323,11 @@ async function resolveRegistryCredential(host: string, environment: CredentialEn
   const helperEntry = findEntry(config.credHelpers, normalizedHost);
   const authEntry = findEntry(config.auths, normalizedHost);
   const serverUrl = helperEntry?.key ?? authEntry?.key ?? defaultServerUrl(normalizedHost);
-  const helpers = new Set([helperEntry?.value, config.credsStore].filter((helper) => helper !== undefined));
+  const helper = helperEntry?.value ?? config.credsStore;
+  const credential = helper === undefined ? undefined : await runHelper({ helper, serverUrl, environment });
 
-  for (const helper of helpers) {
-    const credential = await runHelper({ helper, serverUrl, environment });
-
-    if (credential !== undefined) {
-      return credential;
-    }
+  if (credential !== undefined) {
+    return credential;
   }
 
   return authEntry === undefined ? undefined : credentialFromAuthEntry(authEntry.value);

@@ -19,6 +19,11 @@ const CLIENT_ID = 'infra-tools';
 
 const FORM_CONTENT_TYPE = 'application/x-www-form-urlencoded';
 
+// Hosts a plaintext token endpoint is tolerated on. A local registry has no
+// certificate and nothing it is told leaves the machine, and `localhost` is
+// already a first-class registry host in `resolve-explicit-host`.
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 type BasicCredential = Extract<RegistryCredential, { readonly kind: 'basic' }>;
 
 /**
@@ -46,7 +51,7 @@ interface AcquireBearerTokenParams {
 }
 
 interface TokenRequestParams {
-  readonly realm: string;
+  readonly realm: URL;
   readonly challenge: AuthChallenge;
   readonly scope: string;
   readonly fetch: FetchLike;
@@ -117,21 +122,40 @@ function basicAuthorizationHeader(credential: BasicCredential): string {
   return `Basic ${Buffer.from(`${credential.username}:${credential.password}`, 'utf8').toString('base64')}`;
 }
 
-function buildTokenUrl(params: TokenRequestParams): string | undefined {
-  const { realm, challenge, scope } = params;
+/**
+ * Parses the realm a challenge named, refusing any plaintext endpoint off
+ * the loopback interface.
+ *
+ * The realm is chosen by whoever answered the manifest request, and the
+ * request built from it is the one carrying the credential — an `http://`
+ * realm would put a password or a refresh token on the wire in the clear,
+ * at the say-so of a header. Refusing it costs a verdict of
+ * `'authentication-failure'`, which renders nothing, so the failure mode of
+ * being strict here is silence rather than a wrong answer.
+ */
+function parseRealm(realm: string): URL | undefined {
+  let url: URL;
 
   try {
-    const url = new URL(realm);
-
-    if (challenge.service !== undefined) {
-      url.searchParams.set('service', challenge.service);
-    }
-
-    url.searchParams.set('scope', scope);
-    return url.href;
+    url = new URL(realm);
   } catch {
     return undefined;
   }
+
+  return url.protocol === 'https:' || LOOPBACK_HOSTNAMES.has(url.hostname) ? url : undefined;
+}
+
+function buildTokenUrl(params: TokenRequestParams): string {
+  const { realm, challenge, scope } = params;
+  const url = new URL(realm.href);
+
+  if (challenge.service !== undefined) {
+    url.searchParams.set('service', challenge.service);
+  }
+
+  url.searchParams.set('scope', scope);
+
+  return url.href;
 }
 
 /**
@@ -159,7 +183,7 @@ async function requestTokenWithRefreshToken(params: RefreshTokenRequestParams): 
   body.set('client_id', CLIENT_ID);
   body.set('refresh_token', refreshToken);
 
-  const response = await fetch(realm, {
+  const response = await fetch(realm.href, {
     method: 'POST',
     headers: { 'content-type': FORM_CONTENT_TYPE },
     body: body.toString(),
@@ -185,14 +209,8 @@ async function requestTokenWithRefreshToken(params: RefreshTokenRequestParams): 
  */
 async function requestTokenWithBasic(params: BasicTokenRequestParams): Promise<string | undefined> {
   const { credential, fetch } = params;
-  const url = buildTokenUrl(params);
-
-  if (url === undefined) {
-    return undefined;
-  }
-
   const headers: Record<string, string> = credential === undefined ? {} : { authorization: basicAuthorizationHeader(credential) };
-  const response = await fetch(url, { method: 'GET', headers });
+  const response = await fetch(buildTokenUrl(params), { method: 'GET', headers });
 
   if (!response.ok) {
     return undefined;
@@ -216,7 +234,7 @@ async function requestTokenWithBasic(params: BasicTokenRequestParams): Promise<s
  */
 async function acquireBearerToken(params: AcquireBearerTokenParams): Promise<string | undefined> {
   const { challenge, credential, repositoryName, fetch } = params;
-  const { realm } = challenge;
+  const realm = challenge.realm === undefined ? undefined : parseRealm(challenge.realm);
 
   if (realm === undefined) {
     return undefined;
