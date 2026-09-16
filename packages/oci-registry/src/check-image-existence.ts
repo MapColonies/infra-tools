@@ -1,3 +1,7 @@
+import { acquireBearerToken, basicAuthorizationHeader, parseAuthenticateChallenge } from './authorize';
+import type { CredentialEnvironment, RegistryCredential } from './credentials';
+import { registryEndpoint } from './docker-hub';
+import { isPublicRegistry, resolveRegistryCredential } from './credentials';
 import type { FetchLike, FetchResponseLike } from './fetch-like';
 import { resolveExplicitHost } from './resolve-explicit-host';
 import type { ImageVerdict } from './verdict';
@@ -28,25 +32,27 @@ interface CheckImageExistenceParams {
   readonly repository: string;
   readonly tag: string;
   readonly fetch: FetchLike;
+  readonly credentials: CredentialEnvironment;
 }
 
 /**
  * Checks whether an image reference exists on a container registry.
  *
  * This is the package's single entry point: everything else — host
- * detection, the request shape, the distinction between a missing
- * repository and a missing tag — is reached only through here, on purpose,
- * so a test asserts the requests issued and the verdict returned rather
- * than an internal function.
+ * detection, credential resolution, the request shape, the distinction
+ * between a missing repository and a missing tag — is reached only through
+ * here, on purpose, so a test asserts the requests issued and the verdict
+ * returned rather than an internal function.
  *
  * Only a fully-qualified repository (one naming an explicit registry host)
- * and only an anonymous request are supported so far — no document/registry
- * fallback, no Docker Hub fallback, no credential chain. Anything this
- * package cannot yet resolve, reach, or interpret comes back as
- * `'unverifiable'`, never as a false negative.
+ * is supported so far — no document/registry fallback, no Docker Hub
+ * fallback. Credentials come from the local Docker config and nowhere else:
+ * this package never prompts, and never invents one. Anything it cannot
+ * resolve, reach, or interpret comes back as `'unverifiable'`, never as a
+ * false negative.
  */
 async function checkImageExistence(params: CheckImageExistenceParams): Promise<ImageVerdict> {
-  const { repository, tag, fetch } = params;
+  const { repository, tag, fetch, credentials } = params;
   const location = resolveExplicitHost(repository);
 
   if (location === undefined) {
@@ -58,23 +64,51 @@ async function checkImageExistence(params: CheckImageExistenceParams): Promise<I
   }
 
   const { host, name } = location;
-  const url = new URL(`https://${host}/v2/${name}/manifests/${tag}`);
+  const credential = await resolveRegistryCredential(host, credentials);
+
+  // Resolved before the first request, not after a 401, because an
+  // unlisted registry we hold no credential for must not be contacted at
+  // all: the anonymous attempt discloses a private repository name to
+  // whoever answers, and its 401 says nothing the config did not already.
+  if (credential === undefined && !isPublicRegistry(host)) {
+    return { kind: 'unverifiable', reason: 'needs-login', registry: host };
+  }
+
+  // The request goes to the host that serves the distribution API, which is
+  // not always the host the file names; the verdict keeps naming the one the
+  // file does, so a Hub image is not annotated with an endpoint nobody
+  // wrote down.
+  const url = new URL(`https://${registryEndpoint(host)}/v2/${name}/manifests/${tag}`);
 
   let response: FetchResponseLike;
+
   try {
     response = await fetch(url.href, { method: 'GET', headers: { accept: MANIFEST_ACCEPT_HEADER } });
+
+    if (response.status === HTTP_STATUS_UNAUTHORIZED) {
+      const authorization = await resolveAuthorization({ response, credential, repositoryName: name, fetch });
+
+      if (authorization === undefined) {
+        return { kind: 'unverifiable', reason: 'authentication-failure' };
+      }
+
+      response = await fetch(url.href, { method: 'GET', headers: { accept: MANIFEST_ACCEPT_HEADER, authorization } });
+
+      // A second 401 means the credential itself was refused. Reported as
+      // an authentication failure rather than a not-found, because a
+      // registry is entitled to answer 401 for a repository the caller is
+      // not allowed to know about, and reading that as "missing" is the
+      // false negative this package exists to avoid.
+      if (response.status === HTTP_STATUS_UNAUTHORIZED) {
+        return { kind: 'unverifiable', reason: 'authentication-failure' };
+      }
+    }
   } catch {
     return { kind: 'unverifiable', reason: 'network-error' };
   }
 
   if (response.ok) {
     return { kind: 'exists', registry: host };
-  }
-
-  // No credential handling yet — any auth challenge is unverifiable, never
-  // a signal the image is missing.
-  if (response.status === HTTP_STATUS_UNAUTHORIZED) {
-    return { kind: 'unverifiable', reason: 'missing-credential' };
   }
 
   if (response.status === HTTP_STATUS_NOT_FOUND) {
@@ -92,6 +126,45 @@ async function checkImageExistence(params: CheckImageExistenceParams): Promise<I
   }
 
   return { kind: 'unverifiable', reason: 'unexpected-response' };
+}
+
+interface ResolveAuthorizationParams {
+  readonly response: FetchResponseLike;
+  readonly credential: RegistryCredential | undefined;
+  readonly repositoryName: string;
+  readonly fetch: FetchLike;
+}
+
+/**
+ * Works out the `authorization` header a 401 is asking for, or `undefined`
+ * when this package cannot satisfy the challenge.
+ *
+ * The registry's own challenge decides the scheme rather than the shape of
+ * the credential we happen to hold. A bearer challenge answered with basic
+ * credentials, or an identity token presented as a password, is refused by
+ * every registry that issues either, so the credential is matched to what
+ * was asked for and anything that doesn't line up comes back empty.
+ */
+async function resolveAuthorization(params: ResolveAuthorizationParams): Promise<string | undefined> {
+  const { response, credential, repositoryName, fetch } = params;
+  const header = response.headers.get('www-authenticate');
+
+  if (header === null) {
+    return undefined;
+  }
+
+  const challenge = parseAuthenticateChallenge(header);
+
+  if (challenge === undefined) {
+    return undefined;
+  }
+
+  if (challenge.scheme === 'bearer') {
+    const token = await acquireBearerToken({ challenge, credential, repositoryName, fetch });
+    return token === undefined ? undefined : `Bearer ${token}`;
+  }
+
+  return credential?.kind === 'basic' ? basicAuthorizationHeader(credential) : undefined;
 }
 
 interface DistributionErrorBody {

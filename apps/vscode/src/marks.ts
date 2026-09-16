@@ -93,4 +93,3 @@ function applyMarks(
 }
 
 export { applyMarks, createMarkDecorationType, marksFor };
-export type { MarkKind };

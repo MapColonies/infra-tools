@@ -1,15 +1,18 @@
 import * as vscode from 'vscode';
-import type { FetchLike } from 'oci-registry';
+import { localDockerCredentials, type CredentialEnvironment, type FetchLike } from 'oci-registry';
 import { diagnosticsFor } from './diagnostics';
 import { hoverFor } from './hover';
+import { createLoginPrompts } from './login-prompts';
 import { applyMarks, createMarkDecorationType } from './marks';
-import { checkImageReferencesInDocument, checksAsOf, type DocumentChecks } from './reference-check';
+import { checkImageReferencesInDocument, checksAsOf, registriesNeedingLogin, type DocumentChecks } from './reference-check';
 
 const DIAGNOSTIC_COLLECTION_NAME = 'infra-tools-images';
 
 interface ActivateDependencies {
   /** Only tests override this; production activation uses the platform's `fetch`. */
   readonly fetch?: FetchLike;
+  /** Only tests override this; production activation reads the developer's real Docker config. */
+  readonly credentials?: CredentialEnvironment;
 }
 
 /**
@@ -21,7 +24,10 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   channel.appendLine('Infra Tools extension activated.');
   context.subscriptions.push(channel);
 
-  const fetchImpl = dependencies.fetch ?? (globalThis as unknown as { fetch: FetchLike }).fetch;
+  const checkDependencies = {
+    fetch: dependencies.fetch ?? (globalThis as unknown as { fetch: FetchLike }).fetch,
+    credentials: dependencies.credentials ?? localDockerCredentials,
+  };
   const diagnostics = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_COLLECTION_NAME);
   context.subscriptions.push(diagnostics);
 
@@ -29,12 +35,15 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   const markDecorationType = createMarkDecorationType();
   context.subscriptions.push(markDecorationType);
 
+  const loginPrompts = createLoginPrompts(context.globalState);
+  context.subscriptions.push(loginPrompts);
+
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(async (document) => {
       // VS Code never awaits a listener, so anything escaping this callback
       // is an unhandled rejection, and that takes the extension host down.
       try {
-        const checked = await checkImageReferencesInDocument(document, fetchImpl);
+        const checked = await checkImageReferencesInDocument(document, checkDependencies);
 
         if (checked === undefined) {
           return;
@@ -43,6 +52,11 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
         checksByDocument.set(document.uri.toString(), checked);
         diagnostics.set(document.uri, diagnosticsFor(document, checksAsOf(checked, document)));
         applyMarks(vscode.window.visibleTextEditors, checksByDocument, markDecorationType);
+
+        // Not awaited: a notification stays up until the developer answers
+        // it, and holding an open-document listener for that long would tie
+        // this file's check to a dialog about a registry.
+        void loginPrompts.report(registriesNeedingLogin(checked.checks));
       } catch (error) {
         channel.appendLine(`Checking image references in ${document.uri.toString()} failed: ${String(error)}`);
       }

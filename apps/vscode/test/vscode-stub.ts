@@ -176,15 +176,112 @@ function createEventEmitterStub<T>(): {
 const onDidOpenTextDocumentEmitter = createEventEmitterStub<unknown>();
 const onDidChangeVisibleTextEditorsEmitter = createEventEmitterStub<readonly TextEditorStub[]>();
 
+// Mirrors the real `vscode.StatusBarAlignment` member names and values
+// exactly, for the same reason `DiagnosticSeverity` above does: extension
+// code reads them off the real `@types/vscode` declaration.
+/* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-magic-numbers --
+   mirrors vscode.StatusBarAlignment's real member names and fixed values */
+enum StatusBarAlignment {
+  Left = 1,
+  Right = 2,
+}
+/* eslint-enable @typescript-eslint/naming-convention, @typescript-eslint/no-magic-numbers */
+
+interface StatusBarItemStub {
+  text: string;
+  tooltip: string | undefined;
+  readonly alignment: StatusBarAlignment;
+  readonly priority: number | undefined;
+  readonly show: ReturnType<typeof vi.fn>;
+  readonly hide: ReturnType<typeof vi.fn>;
+  readonly dispose: ReturnType<typeof vi.fn>;
+  /** Test-only: whether the last call was `show` rather than `hide`. Not part of the real API. */
+  visible: boolean;
+}
+
+const statusBarItems: StatusBarItemStub[] = [];
+
+function createStatusBarItemStub(alignment: StatusBarAlignment, priority: number | undefined): StatusBarItemStub {
+  const item: StatusBarItemStub = {
+    text: '',
+    tooltip: undefined,
+    alignment,
+    priority,
+    visible: false,
+    show: vi.fn(() => {
+      item.visible = true;
+    }),
+    hide: vi.fn(() => {
+      item.visible = false;
+    }),
+    dispose: vi.fn(),
+  };
+
+  statusBarItems.push(item);
+
+  return item;
+}
+
+interface TerminalStub {
+  readonly name: string;
+  readonly show: ReturnType<typeof vi.fn>;
+  readonly sendText: ReturnType<typeof vi.fn>;
+  readonly dispose: ReturnType<typeof vi.fn>;
+}
+
+const terminals: TerminalStub[] = [];
+
+function createTerminalStub(name: string): TerminalStub {
+  const terminal: TerminalStub = { name, show: vi.fn(), sendText: vi.fn(), dispose: vi.fn() };
+
+  terminals.push(terminal);
+
+  return terminal;
+}
+
+// Which notification action a test has staged the developer as choosing.
+// `undefined` is the real default: a warning the developer ignores resolves
+// to `undefined`, not to a rejection.
+let warningMessageAnswer: string | undefined;
+
 const window = {
   createOutputChannel: vi.fn(() => ({
     appendLine: vi.fn(),
     dispose: vi.fn(),
   })),
   createTextEditorDecorationType: vi.fn(() => ({ key: 'decoration-type', dispose: vi.fn() })),
+  createStatusBarItem: vi.fn((alignment: StatusBarAlignment, priority?: number) => createStatusBarItemStub(alignment, priority)),
+  createTerminal: vi.fn((name: string) => createTerminalStub(name)),
+  // Real VS Code can only hand back an action that was offered, so the
+  // staged answer is filtered through the offered list rather than returned
+  // blindly — a test that stages an action nobody offers gets the
+  // `undefined` a dismissed notification really produces.
+  // eslint-disable-next-line @typescript-eslint/promise-function-async -- mirrors the real Thenable-returning signature
+  showWarningMessage: vi.fn((message: string, ...actions: string[]) =>
+    Promise.resolve(warningMessageAnswer !== undefined && actions.includes(warningMessageAnswer) ? warningMessageAnswer : undefined)
+  ),
   visibleTextEditors: [] as readonly TextEditorStub[],
   onDidChangeVisibleTextEditors: onDidChangeVisibleTextEditorsEmitter.event,
 };
+
+/**
+ * Test-only helper staging which notification action the developer picks.
+ * Not part of the real `vscode` API. Reset it between tests, or one test's
+ * choice answers the next test's notification.
+ */
+function setWarningMessageAnswer(answer: string | undefined): void {
+  warningMessageAnswer = answer;
+}
+
+/** Test-only helper: the most recently created status bar item. */
+function getLastStatusBarItem(): StatusBarItemStub | undefined {
+  return statusBarItems[statusBarItems.length - 1];
+}
+
+/** Test-only helper: the most recently created terminal. */
+function getLastTerminal(): TerminalStub | undefined {
+  return terminals[terminals.length - 1];
+}
 
 const workspace = {
   onDidOpenTextDocument: onDidOpenTextDocumentEmitter.event,
@@ -217,7 +314,7 @@ async function emitDidChangeVisibleTextEditors(editors: readonly TextEditorStub[
   await onDidChangeVisibleTextEditorsEmitter.fire(editors);
 }
 
-export type { TextEditorStub };
+export type { StatusBarItemStub, TerminalStub, TextEditorStub };
 export {
   createTextEditorStub,
   Diagnostic,
@@ -225,6 +322,8 @@ export {
   emitDidChangeVisibleTextEditors,
   emitDidOpenTextDocument,
   getLastDiagnosticCollection,
+  getLastStatusBarItem,
+  getLastTerminal,
   getRegisteredHoverProvider,
   Hover,
   languages,
@@ -232,6 +331,8 @@ export {
   Position,
   Range,
   setVisibleTextEditors,
+  setWarningMessageAnswer,
+  StatusBarAlignment,
   ThemeColor,
   window,
   workspace,
