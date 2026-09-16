@@ -41,6 +41,7 @@ function createCheck(verdict: ReferenceVerdict): ReferenceCheck {
     reference: {
       repository: { text: REPOSITORY, range: rangeOfText(REPOSITORY) },
       tag: { text: TAG, range: rangeOfText(TAG) },
+      registry: undefined,
     },
     verdict,
   };
@@ -52,6 +53,7 @@ function createTaglessCheck(verdict: ReferenceVerdict): ReferenceCheck {
     reference: {
       repository: { text: REPOSITORY, range: rangeOfText(REPOSITORY) },
       tag: undefined,
+      registry: undefined,
     },
     verdict,
   };
