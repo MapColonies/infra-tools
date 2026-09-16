@@ -7,7 +7,7 @@
  * controls that.
  */
 type UnverifiableReason =
-  /** The repository named no registry and the document declared none, so
+  /** The repository named no registry and none was declared for it, so
    * Docker Hub was guessed — and the guess answered not-found. That is no
    * evidence the image is missing, only that this tool never knew where to
    * look. A bare internal service name absent from Hub is the ordinary case
@@ -31,7 +31,7 @@ type UnverifiableReason =
   /** The registry responded, but not in a way this checker understands. */
   | 'unexpected-response'
   /** Some part of the reference is outside the grammar it has to satisfy: the
-   * tag, the repository name, or a registry the document declared. Rejected
+   * tag, the repository name, or a registry declared for it. Rejected
    * before any request is issued — building a manifest URL out of an
    * unvalidated reference is how a crafted values file smuggles a path
    * traversal, or a different host, into the request. */

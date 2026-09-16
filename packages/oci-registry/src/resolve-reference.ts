@@ -20,12 +20,10 @@ interface RepositoryLocation {
 }
 
 /** How the registry a reference was checked against was arrived at. */
-type RegistrySource = 'explicit' | 'document' | 'docker-hub-fallback';
+type RegistrySource = 'explicit' | 'declared' | 'docker-hub-fallback';
 
 /** A repository string resolved to a registry host and a name on it, kept with how that host was arrived at. */
-interface ResolvedReference {
-  readonly host: string;
-  readonly name: string;
+interface ResolvedReference extends RepositoryLocation {
   readonly source: RegistrySource;
 }
 
@@ -62,32 +60,32 @@ function resolveExplicitHost(repository: string): RepositoryLocation | undefined
 
 /**
  * Resolves a repository string to the registry its image would be pulled
- * from: a host the string names itself, else a registry declared elsewhere
- * in the same document, else Docker Hub.
+ * from: a host the string names itself, else the registry the caller says
+ * was declared for it, else Docker Hub.
  *
  * `undefined` means the reference is malformed — a name outside the OCI
- * grammar, or a `documentRegistry` that is not a host — and never "no
+ * grammar, or a `declaredRegistry` that is not a host — and never "no
  * registry was found", because the last step always produces one. That last
  * step is a guess, which is why the answer carries its
  * {@link ResolvedReference.source}: a not-found from a registry nobody named
  * says something about the guess rather than about the image, and only the
  * source distinguishes the two.
  */
-function resolveReference(repository: string, documentRegistry: string | undefined): ResolvedReference | undefined {
-  const reference = selectRegistry(repository, documentRegistry);
+function resolveReference(repository: string, declaredRegistry: string | undefined): ResolvedReference | undefined {
+  const reference = selectRegistry(repository, declaredRegistry);
 
   if (reference === undefined || !isDockerHub(reference.host) || reference.name.includes('/')) {
     return reference;
   }
 
   // Docker's own normalization, applied however the host was arrived at:
-  // `nginx`, `docker.io/nginx` and a document registry of `docker.io` all
+  // `nginx`, `docker.io/nginx` and a declared registry of `docker.io` all
   // address `library/nginx`, and Hub serves the long form only.
   return { ...reference, name: `${DOCKER_HUB_LIBRARY_NAMESPACE}/${reference.name}` };
 }
 
 /** Picks which of the three registry sources applies, before Hub name normalization. */
-function selectRegistry(repository: string, documentRegistry: string | undefined): ResolvedReference | undefined {
+function selectRegistry(repository: string, declaredRegistry: string | undefined): ResolvedReference | undefined {
   const explicit = resolveExplicitHost(repository);
 
   if (explicit !== undefined) {
@@ -98,14 +96,17 @@ function selectRegistry(repository: string, documentRegistry: string | undefined
     return undefined;
   }
 
-  if (documentRegistry === undefined || documentRegistry === '') {
+  // An empty string is how a caller reading a half-typed file says "nothing
+  // declared"; it is not a registry named badly, so it falls back like the
+  // absence it is.
+  if (declaredRegistry === undefined || declaredRegistry === '') {
     return { host: DOCKER_HUB_HOST, name: repository, source: 'docker-hub-fallback' };
   }
 
-  // A declared registry that is not a host is a malformed document, not an
-  // invitation to guess Hub instead: falling through would answer a
-  // question about a registry the document never asked about.
-  return HOST_PATTERN.test(documentRegistry) ? { host: documentRegistry, name: repository, source: 'document' } : undefined;
+  // A non-empty declared registry that is not a host is a malformed
+  // reference, not an invitation to guess Hub instead: falling through would
+  // answer a question about a registry nobody asked about.
+  return HOST_PATTERN.test(declaredRegistry) ? { host: declaredRegistry, name: repository, source: 'declared' } : undefined;
 }
 
 export { resolveExplicitHost, resolveReference };

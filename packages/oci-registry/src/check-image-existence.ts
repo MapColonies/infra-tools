@@ -33,12 +33,13 @@ interface CheckImageExistenceParams {
   readonly repository: string;
   readonly tag: string;
   /**
-   * A registry declared elsewhere in the same document, or `undefined` when
-   * the document declares none. Required rather than optional so that a
-   * caller with nothing to say has to say so, instead of a forgotten field
-   * silently downgrading a resolvable reference into a Docker Hub guess.
+   * A registry the caller found declared for this reference somewhere the
+   * repository string itself does not reach, or `undefined` when there is
+   * none. Required rather than optional so that a caller with nothing to say
+   * has to say so, instead of a forgotten field silently downgrading a
+   * resolvable reference into a Docker Hub guess.
    */
-  readonly documentRegistry: string | undefined;
+  readonly declaredRegistry: string | undefined;
   readonly fetch: FetchLike;
   readonly credentials: CredentialEnvironment;
 }
@@ -53,11 +54,10 @@ interface CheckImageExistenceParams {
  * returned rather than an internal function.
  *
  * The registry is resolved in three steps: a host the repository names
- * itself, else `documentRegistry`, else Docker Hub. That last step is a
- * guess, so a not-found from it is downgraded to `'guessed-registry'`, for
- * the reason recorded on that member of {@link UnverifiableReason}. A
- * positive answer from the guess still stands, so public images keep
- * verifying.
+ * itself, else `declaredRegistry`, else Docker Hub. That last step is a
+ * guess, so a not-found from it is downgraded to `'guessed-registry'`, whose
+ * own doc comment in `verdict.ts` records why. A positive answer from the
+ * guess still stands, so public images keep verifying.
  *
  * Credentials come from the local Docker config and nowhere else: this
  * package never prompts, and never invents one. Anything it cannot resolve,
@@ -65,8 +65,8 @@ interface CheckImageExistenceParams {
  * negative.
  */
 async function checkImageExistence(params: CheckImageExistenceParams): Promise<ImageVerdict> {
-  const { repository, tag, documentRegistry, fetch, credentials } = params;
-  const reference = resolveReference(repository, documentRegistry);
+  const { repository, tag, declaredRegistry, fetch, credentials } = params;
+  const reference = resolveReference(repository, declaredRegistry);
 
   if (reference === undefined || !TAG_PATTERN.test(tag)) {
     return { kind: 'unverifiable', reason: 'malformed-reference' };

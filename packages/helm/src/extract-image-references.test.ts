@@ -178,7 +178,7 @@ describe('extractImageReferences', () => {
 
       const [reference] = extractImageReferences(source);
 
-      expect(reference?.registry?.text).toBe('sibling.example.com');
+      expect(reference?.registry).toBe('sibling.example.com');
     });
 
     it('should apply a top-level registry key to a reference with no sibling registry', () => {
@@ -186,7 +186,7 @@ describe('extractImageReferences', () => {
 
       const [reference] = extractImageReferences(source);
 
-      expect(reference?.registry?.text).toBe('top.example.com');
+      expect(reference?.registry).toBe('top.example.com');
     });
 
     it('should prefer global.imageRegistry over a top-level registry', () => {
@@ -196,7 +196,7 @@ describe('extractImageReferences', () => {
 
       const [reference] = extractImageReferences(source);
 
-      expect(reference?.registry?.text).toBe('global.example.com');
+      expect(reference?.registry).toBe('global.example.com');
     });
 
     it('should apply global.registry when global.imageRegistry is absent', () => {
@@ -204,7 +204,7 @@ describe('extractImageReferences', () => {
 
       const [reference] = extractImageReferences(source);
 
-      expect(reference?.registry?.text).toBe('global.example.com');
+      expect(reference?.registry).toBe('global.example.com');
     });
 
     it('should prefer a sibling registry over a document-level one', () => {
@@ -219,7 +219,7 @@ describe('extractImageReferences', () => {
 
       const [reference] = extractImageReferences(source);
 
-      expect(reference?.registry?.text).toBe('sibling.example.com');
+      expect(reference?.registry).toBe('sibling.example.com');
     });
 
     it('should fall through to the document-level registry when the sibling registry is templated', () => {
@@ -234,7 +234,7 @@ describe('extractImageReferences', () => {
 
       const [reference] = extractImageReferences(source);
 
-      expect(reference?.registry?.text).toBe('global.example.com');
+      expect(reference?.registry).toBe('global.example.com');
     });
 
     it('should fall through to the next document-level path when the first holds a non-scalar value', () => {
@@ -250,7 +250,7 @@ describe('extractImageReferences', () => {
 
       const [reference] = extractImageReferences(source);
 
-      expect(reference?.registry?.text).toBe('top.example.com');
+      expect(reference?.registry).toBe('top.example.com');
     });
 
     it('should report no registry for a document that declares none', () => {
@@ -261,15 +261,12 @@ describe('extractImageReferences', () => {
       expect(reference?.registry).toBeUndefined();
     });
 
-    it('should report the registry raw text and source range for a quoted scalar', () => {
+    it('should report the registry as written, with one layer of quotes stripped', () => {
       const source = ['image:', '  repository: my-service', '  registry: "myreg.example.com"', ''].join('\n');
 
       const [reference] = extractImageReferences(source);
-      const registry = reference?.registry;
 
-      expect(registry).toBeDefined();
-      expect(registry!.text).toBe('myreg.example.com');
-      expect(source.slice(registry!.range.start, registry!.range.end)).toBe('myreg.example.com');
+      expect(reference?.registry).toBe('myreg.example.com');
     });
 
     it('should report the repository and tag unchanged for a reference under a declared registry', () => {
@@ -279,7 +276,7 @@ describe('extractImageReferences', () => {
 
       expect(reference?.repository.text).toBe('my-service');
       expect(reference?.tag?.text).toBe('1.10');
-      expect(reference?.registry?.text).toBe('global.example.com');
+      expect(reference?.registry).toBe('global.example.com');
     });
   });
 

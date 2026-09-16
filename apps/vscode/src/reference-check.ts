@@ -81,7 +81,7 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, dep
           : await checkImageExistence({
               repository: reference.repository.text,
               tag: reference.tag.text,
-              documentRegistry: reference.registry?.text,
+              declaredRegistry: reference.registry,
               fetch,
               credentials,
             }),

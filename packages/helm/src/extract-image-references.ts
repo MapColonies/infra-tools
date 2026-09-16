@@ -20,8 +20,14 @@ interface RawScalar {
 interface ImageReference {
   readonly repository: RawScalar;
   readonly tag: RawScalar | undefined;
-  /** The registry declared for this reference, if the document declares one. */
-  readonly registry: RawScalar | undefined;
+  /**
+   * The registry declared for this reference, as written, or `undefined`
+   * when the document declares none. A bare string rather than a
+   * {@link RawScalar}: a document-level declaration sits on a line that has
+   * nothing to do with this reference, so a range here would underline
+   * somewhere misleading.
+   */
+  readonly registry: string | undefined;
 }
 
 /** A sibling key that corroborates `repository` as an image reference. */
@@ -103,7 +109,7 @@ function extractImageReferences(source: string): ImageReference[] {
       references.push({
         repository,
         tag: readSiblingScalar(source, node.items, 'tag'),
-        registry: readSiblingScalar(source, node.items, 'registry') ?? documentRegistry,
+        registry: readSiblingScalar(source, node.items, 'registry')?.text ?? documentRegistry,
       });
     },
   });
@@ -115,14 +121,14 @@ function extractImageReferences(source: string): ImageReference[] {
  * Reads the registry the document declares for all of its references, trying
  * each known key path in precedence order.
  */
-function readDocumentRegistry(source: string, document: Document): RawScalar | undefined {
+function readDocumentRegistry(source: string, document: Document): string | undefined {
   for (const path of DOCUMENT_REGISTRY_KEY_PATHS) {
-    // `getIn` hands back parsed values by default; the scalar node is what
-    // carries the source range.
+    // `getIn` hands back parsed values by default, and a parsed value is the
+    // one thing this package never reads a field from.
     const registry = readUsableScalar(source, document.getIn(path, true));
 
     if (registry !== undefined) {
-      return registry;
+      return registry.text;
     }
   }
 
