@@ -42,7 +42,7 @@ interface DockerCredentialsParams {
   readonly runCredentialHelper?: CredentialEnvironment['runCredentialHelper'];
 }
 
-function dockerCredentials(params: DockerCredentialsParams = {}): CredentialEnvironment {
+function fakeDockerCredentials(params: DockerCredentialsParams = {}): CredentialEnvironment {
   const { config, configText, runCredentialHelper } = params;
   const contents = configText ?? (config === undefined ? undefined : JSON.stringify(config));
 
@@ -94,14 +94,35 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith('https://docker.io/v2/library/nginx/manifests/1.19', {
+    expect(fetch).toHaveBeenCalledWith('https://registry-1.docker.io/v2/library/nginx/manifests/1.19', {
       method: 'GET',
       headers: { accept: MANIFEST_ACCEPT_HEADER },
     });
+    expect(verdict).toEqual({ kind: 'exists', registry: 'docker.io' });
+  });
+
+  it('should send a docker.io reference to the host that serves the API, while still reporting docker.io', async () => {
+    const fetch = vi.fn<FetchLike>().mockResolvedValue(fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } }));
+
+    const verdict = await checkImageExistence({
+      repository: 'docker.io/library/nginx',
+      tag: '1.19',
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    // `docker.io` redirects a manifest GET to the marketing site, which
+    // answers 200. Requesting it would report every Hub image as existing,
+    // missing tags included — the one wrong answer a checkmark cannot
+    // survive. Only `registry-1.docker.io` serves the distribution API.
+    expect(requestAt(fetch.mock.calls, 0).url).toBe('https://registry-1.docker.io/v2/library/nginx/manifests/1.19');
+
+    // The verdict names the registry the file did, so the mark stays quiet
+    // instead of appending an endpoint nobody wrote down.
     expect(verdict).toEqual({ kind: 'exists', registry: 'docker.io' });
   });
 
@@ -112,7 +133,7 @@ describe('checkImageExistence', () => {
       repository: 'ghcr.io/example/does-not-exist',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(verdict).toEqual({ kind: 'repository-not-found', repository: 'ghcr.io/example/does-not-exist' });
@@ -125,7 +146,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: 'does-not-exist',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(verdict).toEqual({
@@ -142,7 +163,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'unexpected-response' });
@@ -155,7 +176,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(fetch).not.toHaveBeenCalled();
@@ -169,7 +190,7 @@ describe('checkImageExistence', () => {
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'network-error' });
@@ -182,7 +203,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'unexpected-response' });
@@ -191,7 +212,7 @@ describe('checkImageExistence', () => {
   it('should report unverifiable without issuing a request when the repository names no explicit host', async () => {
     const fetch = vi.fn<FetchLike>();
 
-    const verdict = await checkImageExistence({ repository: 'nginx', tag: 'latest', fetch, credentials: dockerCredentials() });
+    const verdict = await checkImageExistence({ repository: 'nginx', tag: 'latest', fetch, credentials: fakeDockerCredentials() });
 
     expect(fetch).not.toHaveBeenCalled();
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'no-registry' });
@@ -204,7 +225,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io@evil.example/library/nginx',
       tag: '1.19',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(fetch).not.toHaveBeenCalled();
@@ -218,7 +239,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/../secrets',
       tag: '1.19',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(fetch).not.toHaveBeenCalled();
@@ -232,7 +253,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '../../other',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(fetch).not.toHaveBeenCalled();
@@ -256,7 +277,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
+      credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
 
     const token = requestAt(fetch.mock.calls, 1);
@@ -295,7 +316,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({
+      credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', auths: { 'https://private.example.com': {} } },
         runCredentialHelper,
       }),
@@ -330,7 +351,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({
+      credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', credHelpers: { 'private.example.com': 'acr-env' } },
         runCredentialHelper,
       }),
@@ -364,7 +385,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({
+      credentials: fakeDockerCredentials({
         config: {
           credsStore: 'desktop',
           credHelpers: { 'private.example.com': 'acr-env' },
@@ -407,7 +428,7 @@ describe('checkImageExistence', () => {
       repository: 'myorg.azurecr.io/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({
+      credentials: fakeDockerCredentials({
         config: {
           auths: {
             'myorg.azurecr.io': {
@@ -455,7 +476,7 @@ describe('checkImageExistence', () => {
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(requestAt(fetch.mock.calls, 1).init.headers).toEqual({});
@@ -483,7 +504,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 'expired') } } } }),
+      credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 'expired') } } } }),
     });
 
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'authentication-failure' });
@@ -496,7 +517,7 @@ describe('checkImageExistence', () => {
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials(),
+      credentials: fakeDockerCredentials(),
     });
 
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'authentication-failure' });
@@ -515,7 +536,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
+      credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
 
     // Whoever answered the manifest request chose that realm, and the
@@ -537,7 +558,7 @@ describe('checkImageExistence', () => {
       repository: 'localhost:5000/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({ config: { auths: { 'localhost:5000': { auth: encodeAuth('dev', 's3cret') } } } }),
+      credentials: fakeDockerCredentials({ config: { auths: { 'localhost:5000': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
 
     expect(requestAt(fetch.mock.calls, 1).url).toBe('http://localhost:5000/token?service=localhost%3A5000&scope=repository%3Aapp%3Apull');
@@ -564,7 +585,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({
+      credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } },
         runCredentialHelper,
       }),
@@ -592,7 +613,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       fetch,
-      credentials: dockerCredentials({
+      credentials: fakeDockerCredentials({
         config: { auths: { 'https://index.docker.io/v1/': { auth: encodeAuth('hub-user', 'hub-secret') } } },
       }),
     });
@@ -630,7 +651,7 @@ describe('checkImageExistence', () => {
       repository: 'myorg.azurecr.io/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({
+      credentials: fakeDockerCredentials({
         config: {
           auths: {
             'myorg.azurecr.io': { auth: encodeAuth('stale-user', 'stale-password'), identitytoken: 'refresh-token-value' },
@@ -657,7 +678,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
+      credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
 
     expect(fetch).toHaveBeenCalledTimes(2);
@@ -694,7 +715,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({ config: { credHelpers: { 'private.example.com': 'acr-env' } }, runCredentialHelper }),
+      credentials: fakeDockerCredentials({ config: { credHelpers: { 'private.example.com': 'acr-env' } }, runCredentialHelper }),
     });
 
     const token = requestAt(fetch.mock.calls, 1);
@@ -716,7 +737,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       fetch,
-      credentials: dockerCredentials({
+      credentials: fakeDockerCredentials({
         configText: `{ "auths": { "private.example.com": { "auth": "${encodeAuth('dev', 's3cret')}" }, } }`,
       }),
     });

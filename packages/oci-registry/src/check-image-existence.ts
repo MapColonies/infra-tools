@@ -1,5 +1,6 @@
 import { acquireBearerToken, basicAuthorizationHeader, parseAuthenticateChallenge } from './authorize';
 import type { CredentialEnvironment, RegistryCredential } from './credentials';
+import { registryEndpoint } from './docker-hub';
 import { isPublicRegistry, resolveRegistryCredential } from './credentials';
 import type { FetchLike, FetchResponseLike } from './fetch-like';
 import { resolveExplicitHost } from './resolve-explicit-host';
@@ -73,7 +74,11 @@ async function checkImageExistence(params: CheckImageExistenceParams): Promise<I
     return { kind: 'unverifiable', reason: 'needs-login', registry: host };
   }
 
-  const url = new URL(`https://${host}/v2/${name}/manifests/${tag}`);
+  // The request goes to the host that serves the distribution API, which is
+  // not always the host the file names; the verdict keeps naming the one the
+  // file does, so a Hub image is not annotated with an endpoint nobody
+  // wrote down.
+  const url = new URL(`https://${registryEndpoint(host)}/v2/${name}/manifests/${tag}`);
 
   let response: FetchResponseLike;
 

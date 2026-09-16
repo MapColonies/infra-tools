@@ -1,3 +1,6 @@
+import { DOCKER_HUB_HOST, DOCKER_HUB_SERVER_URL, isDockerHub } from './docker-hub';
+import { isRecord, readStringField } from './read-json';
+
 /**
  * Hosts an anonymous manifest request is allowed against.
  *
@@ -21,19 +24,6 @@ const PUBLIC_REGISTRIES = new Set([
   'gcr.io',
   'k8s.gcr.io',
 ]);
-
-const DOCKER_HUB_HOST = 'docker.io';
-
-// The three spellings Docker Hub answers to. `docker login` writes the
-// config entry under `https://index.docker.io/v1/`, a repository names the
-// registry as `docker.io`, and the pull endpoint is `registry-1.docker.io`,
-// so a credential written by one of them has to be found by the others.
-const DOCKER_HUB_ALIASES = new Set([DOCKER_HUB_HOST, 'index.docker.io', 'registry-1.docker.io']);
-
-// The key `docker login` writes Docker Hub under, and therefore the server
-// URL a credential helper expects to be asked about for Docker Hub. The
-// bare host would be a cache miss in every helper a real developer has.
-const DOCKER_HUB_SERVER_URL = 'https://index.docker.io/v1/';
 
 const SCHEME_PREFIX_PATTERN = /^https?:\/\//;
 
@@ -97,19 +87,6 @@ interface DockerConfig {
   readonly auths: readonly DockerConfigEntry<DockerAuthEntry>[];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function readStringField(source: unknown, field: string): string | undefined {
-  if (!isRecord(source)) {
-    return undefined;
-  }
-
-  const value = source[field];
-  return typeof value === 'string' ? value : undefined;
-}
-
 /**
  * Reduces a config key or a registry host to the bare `host[:port]` the two
  * can be compared on.
@@ -123,7 +100,7 @@ function readStringField(source: unknown, field: string): string | undefined {
  */
 function normalizeConfigKey(key: string): string {
   const [hostPort = ''] = key.replace(SCHEME_PREFIX_PATTERN, '').split('/');
-  return DOCKER_HUB_ALIASES.has(hostPort) ? DOCKER_HUB_HOST : hostPort;
+  return isDockerHub(hostPort) ? DOCKER_HUB_HOST : hostPort;
 }
 
 function parseAuthEntry(value: unknown): DockerAuthEntry | undefined {
