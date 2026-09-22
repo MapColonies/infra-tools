@@ -1,4 +1,4 @@
-import { isPair, isScalar, parseDocument, visit, type Pair } from 'yaml';
+import { isPair, isScalar, parseDocument, visit, type Document, type Pair } from 'yaml';
 
 /** A half-open character range into the original source text. */
 interface SourceRange {
@@ -20,6 +20,14 @@ interface RawScalar {
 interface ImageReference {
   readonly repository: RawScalar;
   readonly tag: RawScalar | undefined;
+  /**
+   * The registry declared for this reference, as written, or `undefined`
+   * when the document declares none. A bare string rather than a
+   * {@link RawScalar}: a document-level declaration sits on a line that has
+   * nothing to do with this reference, so a range here would underline
+   * somewhere misleading.
+   */
+  readonly registry: string | undefined;
 }
 
 /** A sibling key that corroborates `repository` as an image reference. */
@@ -27,6 +35,18 @@ const CORROBORATING_SIBLING_KEYS: ReadonlySet<string> = new Set(['tag', 'pullPol
 
 /** The exact parent key that corroborates a `repository` mapping on its own. */
 const CORROBORATING_PARENT_KEY = 'image';
+
+/**
+ * The key paths under which a values file declares one registry for the whole
+ * document. Listed in precedence order: the first path holding a usable
+ * scalar wins, so a new convention is a new row rather than a new branch.
+ */
+const DOCUMENT_REGISTRY_KEY_PATHS: readonly (readonly string[])[] = [
+  ['global', 'imageRegistry'],
+  ['global', 'registry'],
+  ['imageRegistry'],
+  ['registry'],
+];
 
 /**
  * Finds image references in Helm values file source text.
@@ -38,15 +58,25 @@ const CORROBORATING_PARENT_KEY = 'image';
  * ending in `Image`. A missing `tag` doesn't disqualify a candidate; it
  * makes the reference tagless.
  *
- * `repository` and `tag` are read from raw source text, not the parsed
- * value: YAML coerces `1.10` to the float `1.1`, which would put a wrong
- * diagnostic on a correct file.
+ * Values files commonly split the registry off from the repository, so
+ * `repository: my-service` under a declared `myreg.example.com` names
+ * `myreg.example.com/my-service`. A sibling `registry` key wins; otherwise
+ * the document-level registry found through `DOCUMENT_REGISTRY_KEY_PATHS`
+ * applies to every reference in the file. The declared string is emitted as
+ * written — deciding what it points at belongs to the OCI registry package.
  *
- * A value containing Helm template syntax is skipped: a templated
- * `repository` drops the candidate, a templated `tag` is treated as absent.
+ * Every field is read from raw source text, not the parsed value: YAML
+ * coerces `1.10` to the float `1.1`, which would put a wrong diagnostic on a
+ * correct file.
+ *
+ * A value containing Helm template syntax is unusable, and so is a non-scalar
+ * or empty one. An unusable `repository` drops the candidate; an unusable
+ * `tag` makes the reference tagless; an unusable `registry` falls through to
+ * the next candidate in the order above.
  */
 function extractImageReferences(source: string): ImageReference[] {
   const document = parseDocument(source);
+  const documentRegistry = readDocumentRegistry(source, document);
   const references: ImageReference[] = [];
 
   visit(document, {
@@ -70,23 +100,57 @@ function extractImageReferences(source: string): ImageReference[] {
         return;
       }
 
-      const repository = readRawScalar(source, repositoryPair.value);
+      const repository = readUsableScalar(source, repositoryPair.value);
 
-      if (repository === undefined || containsHelmTemplateSyntax(repository.text)) {
+      if (repository === undefined) {
         return;
       }
 
-      const tagPair = node.items.find((pair) => keyNameOf(pair) === 'tag');
-      const tag = tagPair === undefined ? undefined : readRawScalar(source, tagPair.value);
-
       references.push({
         repository,
-        tag: tag === undefined || containsHelmTemplateSyntax(tag.text) ? undefined : tag,
+        tag: readSiblingScalar(source, node.items, 'tag'),
+        registry: readSiblingScalar(source, node.items, 'registry')?.text ?? documentRegistry,
       });
     },
   });
 
   return references;
+}
+
+/**
+ * Reads the registry the document declares for all of its references, trying
+ * each known key path in precedence order.
+ */
+function readDocumentRegistry(source: string, document: Document): string | undefined {
+  for (const path of DOCUMENT_REGISTRY_KEY_PATHS) {
+    // `getIn` hands back parsed values by default, and a parsed value is the
+    // one thing this package never reads a field from.
+    const registry = readUsableScalar(source, document.getIn(path, true));
+
+    if (registry !== undefined) {
+      return registry.text;
+    }
+  }
+
+  return undefined;
+}
+
+/** Reads a named key's value from the mapping a candidate was found in. */
+function readSiblingScalar(source: string, items: readonly Pair[], name: string): RawScalar | undefined {
+  const pair = items.find((candidate) => keyNameOf(candidate) === name);
+
+  return pair === undefined ? undefined : readUsableScalar(source, pair.value);
+}
+
+/**
+ * Reads a scalar a consumer can act on. Helm resolves template syntax at
+ * render time, and this package never renders, so a templated value is no
+ * more usable here than a missing one and reads as `undefined` too.
+ */
+function readUsableScalar(source: string, node: unknown): RawScalar | undefined {
+  const scalar = readRawScalar(source, node);
+
+  return scalar === undefined || containsHelmTemplateSyntax(scalar.text) ? undefined : scalar;
 }
 
 /** Whether a mapping's parent key is `image` or ends in `Image`. */

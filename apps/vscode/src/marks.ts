@@ -29,11 +29,21 @@ function markKindOf(verdict: ReferenceVerdict): MarkKind {
 }
 
 /**
- * The answering registry, named only when it differs from the host the file
+ * The registry the file itself names for a reference: a host spelled out in
+ * the repository, else the one the document declared for it. `undefined` when the
+ * file names none, which is not the same as naming Docker Hub — the check
+ * only guessed it, and the mark is the one place that difference shows.
+ */
+function registryNamedByFile(reference: ImageReference): string | undefined {
+  return resolveExplicitHost(reference.repository.text)?.host ?? reference.registry;
+}
+
+/**
+ * The answering registry, named only when it differs from the one the file
  * names, so the mark carries information instead of restating the line.
  */
 function registrySuffixOf(reference: ImageReference, verdict: ReferenceVerdict): string {
-  if (verdict.kind !== 'exists' || verdict.registry === resolveExplicitHost(reference.repository.text)?.host) {
+  if (verdict.kind !== 'exists' || verdict.registry === registryNamedByFile(reference)) {
     return '';
   }
 
