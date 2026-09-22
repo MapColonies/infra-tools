@@ -1,16 +1,5 @@
 import { isPair, isScalar, parseDocument, visit, type Document, type Pair } from 'yaml';
-
-/** A half-open character range into the original source text. */
-interface SourceRange {
-  readonly start: number;
-  readonly end: number;
-}
-
-/** A scalar's exact source text, never the value YAML parsed it into. */
-interface RawScalar {
-  readonly text: string;
-  readonly range: SourceRange;
-}
+import { readUsableScalar, type RawScalar } from './raw-scalar';
 
 /**
  * A candidate image reference found in a Helm values file. `tag` is
@@ -142,17 +131,6 @@ function readSiblingScalar(source: string, items: readonly Pair[], name: string)
   return pair === undefined ? undefined : readUsableScalar(source, pair.value);
 }
 
-/**
- * Reads a scalar a consumer can act on. Helm resolves template syntax at
- * render time, and this package never renders, so a templated value is no
- * more usable here than a missing one and reads as `undefined` too.
- */
-function readUsableScalar(source: string, node: unknown): RawScalar | undefined {
-  const scalar = readRawScalar(source, node);
-
-  return scalar === undefined || containsHelmTemplateSyntax(scalar.text) ? undefined : scalar;
-}
-
 /** Whether a mapping's parent key is `image` or ends in `Image`. */
 function hasCorroboratingParentKey(path: readonly unknown[]): boolean {
   const parent = path[path.length - 1];
@@ -166,61 +144,5 @@ function keyNameOf(pair: Pair): string | undefined {
   return isScalar(pair.key) ? String(pair.key.value) : undefined;
 }
 
-/** Whether a scalar's raw text contains unresolved Helm template syntax. */
-function containsHelmTemplateSyntax(text: string): boolean {
-  return text.includes('{{') && text.includes('}}');
-}
-
-/**
- * Slices a scalar node's exact source text out of the document, stripping a
- * single layer of matching quotes when the scalar was written quoted. Only
- * plain and single/double-quoted scalars carry a usable range here; a
- * missing value, or a non-scalar value (a nested mapping or sequence),
- * yields `undefined` so the caller skips the candidate entirely.
- */
-function readRawScalar(source: string, node: unknown): RawScalar | undefined {
-  if (!isScalar(node)) {
-    return undefined;
-  }
-
-  const range = node.range;
-
-  if (!range) {
-    return undefined;
-  }
-
-  const [start, end] = range;
-
-  // Nothing after the colon (`repository:`) parses as a zero-length scalar,
-  // not `null` — treat it as absent rather than an empty-string value.
-  if (start === end) {
-    return undefined;
-  }
-
-  const raw = source.slice(start, end);
-  const { text, offset } = stripQuotes(raw);
-
-  return {
-    text,
-    range: { start: start + offset, end: start + offset + text.length },
-  };
-}
-
-// A quote pair is the shortest string that can carry one: two characters,
-// one at each end.
-const MIN_QUOTED_LENGTH = 2;
-
-/** Strips one layer of matching single or double quotes, if present. */
-function stripQuotes(raw: string): { text: string; offset: number } {
-  const first = raw[0];
-  const last = raw[raw.length - 1];
-
-  if (raw.length >= MIN_QUOTED_LENGTH && first === last && (first === '"' || first === "'")) {
-    return { text: raw.slice(1, raw.length - 1), offset: 1 };
-  }
-
-  return { text: raw, offset: 0 };
-}
-
 export { extractImageReferences };
-export type { ImageReference, RawScalar, SourceRange };
+export type { ImageReference };
