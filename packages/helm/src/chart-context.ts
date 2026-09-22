@@ -29,11 +29,12 @@ type ResolvedTag =
   | { readonly source: 'chart-metadata'; readonly text: string; readonly metadataPath: string };
 
 /**
- * The names chart metadata goes by, in the order they are tried. Helm's own
- * convention is `Chart.yaml`, and `Chart.yml` turns up often enough that the
- * second spelling is a new row here rather than a new branch below.
+ * The one name chart metadata goes by. Helm's own loader recognises
+ * `Chart.yaml` and nothing else, so accepting a second spelling would
+ * resolve an `appVersion` out of a file Helm would ignore — the opposite of
+ * what this module exists to do.
  */
-const CHART_METADATA_FILE_NAMES: readonly string[] = ['Chart.yaml', 'Chart.yml'];
+const CHART_METADATA_FILE_NAME = 'Chart.yaml';
 
 /** The chart subdirectory holding Go templates, whose syntax yields nothing checkable. */
 const TEMPLATES_DIRECTORY_NAME = 'templates';
@@ -42,7 +43,7 @@ const TEMPLATES_DIRECTORY_NAME = 'templates';
  * The names a values file goes by when no chart vouches for it — outside a
  * chart directory the name is the only evidence there is.
  */
-const STANDALONE_VALUES_FILE_NAME = /^values\.ya?ml$/i;
+const STANDALONE_VALUES_FILE_NAME_PATTERN = /^values\.ya?ml$/i;
 
 /**
  * Resolves the chart governing a YAML file, and with it whether this package
@@ -57,7 +58,9 @@ const STANDALONE_VALUES_FILE_NAME = /^values\.ya?ml$/i;
  *
  * A file under the chart's `templates/` directory is out of scope outright,
  * even one named `values.yaml`. It is Go template source, and template
- * syntax resolves at render time, which this package never does.
+ * syntax resolves at render time, which this package never does. So is the
+ * chart's own metadata file, which declares a chart rather than supplying
+ * values to one.
  *
  * With no chart anywhere above it, a file is in scope only when its own name
  * says it is a values file — that keeps a standalone values file working
@@ -75,15 +78,15 @@ async function resolveValuesFileContext(path: string, readTextFile: ReadTextFile
     const chart = await readChartMetadata(segments.slice(0, depth), readTextFile);
 
     if (chart !== undefined) {
-      const firstSegmentBelowChart = segments[depth];
+      const isUnderTemplates = segments[depth] === TEMPLATES_DIRECTORY_NAME;
 
-      return firstSegmentBelowChart === TEMPLATES_DIRECTORY_NAME ? undefined : { chart };
+      return isUnderTemplates || chart.path === path ? undefined : { chart };
     }
   }
 
   const fileName = segments[segments.length - 1];
 
-  return fileName !== undefined && STANDALONE_VALUES_FILE_NAME.test(fileName) ? { chart: undefined } : undefined;
+  return fileName !== undefined && STANDALONE_VALUES_FILE_NAME_PATTERN.test(fileName) ? { chart: undefined } : undefined;
 }
 
 /**
@@ -95,16 +98,10 @@ async function resolveValuesFileContext(path: string, readTextFile: ReadTextFile
  * `//Chart.yaml`.
  */
 async function readChartMetadata(directorySegments: readonly string[], readTextFile: ReadTextFile): Promise<ChartMetadata | undefined> {
-  for (const fileName of CHART_METADATA_FILE_NAMES) {
-    const metadataPath = [...directorySegments, fileName].join('/');
-    const text = await readTextFile(metadataPath);
+  const metadataPath = [...directorySegments, CHART_METADATA_FILE_NAME].join('/');
+  const text = await readTextFile(metadataPath);
 
-    if (text !== undefined) {
-      return { path: metadataPath, appVersion: readAppVersion(text) };
-    }
-  }
-
-  return undefined;
+  return text === undefined ? undefined : { path: metadataPath, appVersion: readAppVersion(text) };
 }
 
 /**
@@ -138,5 +135,5 @@ function resolveTag(reference: ImageReference, chart: ChartMetadata | undefined)
   return undefined;
 }
 
-export { resolveTag, resolveValuesFileContext };
+export { CHART_METADATA_FILE_NAME, resolveTag, resolveValuesFileContext };
 export type { ChartMetadata, ReadTextFile, ResolvedTag, ValuesFileContext };

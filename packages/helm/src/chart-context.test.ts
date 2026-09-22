@@ -51,13 +51,20 @@ describe('resolveValuesFileContext', () => {
     expect(context?.chart?.appVersion).toBe('2.0.0');
   });
 
-  it('should find chart metadata written as Chart.yml', async () => {
+  it('should ignore metadata written as Chart.yml, which Helm itself would not load', async () => {
     const readTextFile = createFakeFileSystem({ '/repo/chart/Chart.yml': CHART_METADATA });
 
     const context = await resolveValuesFileContext('/repo/chart/values.yaml', readTextFile);
 
-    expect(context?.chart?.path).toBe('/repo/chart/Chart.yml');
-    expect(context?.chart?.appVersion).toBe('1.2.3');
+    // In scope through the filename fallback, but governed by no chart: an
+    // `appVersion` Helm would never read is worse than none at all.
+    expect(context).toEqual({ chart: undefined });
+  });
+
+  it('should exclude a chart own metadata file, which declares a chart rather than supplying values', async () => {
+    const readTextFile = createFakeFileSystem({ '/repo/chart/Chart.yaml': CHART_METADATA });
+
+    await expect(resolveValuesFileContext('/repo/chart/Chart.yaml', readTextFile)).resolves.toBeUndefined();
   });
 
   it('should treat any yaml file beneath a chart directory as in scope', async () => {
