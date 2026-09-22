@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import type { UnverifiableReason } from 'oci-registry';
-import { chartProvenanceSentence, type ReferenceCheck } from './reference-check';
+import type { ReferenceCheck } from './reference-check';
 import { containsOffset } from './source-range';
+import { chartProvenanceSentence } from './tag-provenance';
 
 // A table rather than a switch, so adding a reason fails the build here
 // instead of hovering with no explanation.

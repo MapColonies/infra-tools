@@ -87,16 +87,6 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, dep
 }
 
 /**
- * The sentence a message owes the reader when the tag it reports was never
- * written in the file. Shared by the diagnostic and the hover so the two
- * cannot word the same provenance differently, and empty for a tag the file
- * wrote, which needs no explaining.
- */
-function chartProvenanceSentence(tag: ResolvedTag, describeChartPath: (path: string) => string): string {
-  return tag.source === 'file' ? '' : ` Tag taken from appVersion in ${describeChartPath(tag.metadataPath)}.`;
-}
-
-/**
  * A document's checks, or none once the text has moved on. Recorded offsets
  * belong to the version that was checked, so projecting them onto edited
  * text would slide a mark onto whatever now sits at that offset.
@@ -125,5 +115,5 @@ function registriesNeedingLogin(checks: readonly ReferenceCheck[]): string[] {
   return [...registries];
 }
 
-export { chartProvenanceSentence, checkImageReferencesInDocument, checksAsOf, registriesNeedingLogin };
+export { checkImageReferencesInDocument, checksAsOf, registriesNeedingLogin };
 export type { DocumentChecks, ReferenceCheck };

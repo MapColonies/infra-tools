@@ -298,8 +298,6 @@ interface FileSystemWatcherStub {
   readonly dispose: ReturnType<typeof vi.fn>;
   /** Test-only: drives the change listeners and awaits them. Not part of the real `vscode` API. */
   readonly fireDidChange: (uri: unknown) => Promise<void>;
-  /** Test-only: drives the create listeners and awaits them. Not part of the real `vscode` API. */
-  readonly fireDidCreate: (uri: unknown) => Promise<void>;
 }
 
 const fileSystemWatchers: FileSystemWatcherStub[] = [];
@@ -315,7 +313,6 @@ function createFileSystemWatcherStub(globPattern: string): FileSystemWatcherStub
     onDidDelete: didDelete.event,
     dispose: vi.fn(),
     fireDidChange: didChange.fire,
-    fireDidCreate: didCreate.fire,
   };
 
   fileSystemWatchers.push(watcher);

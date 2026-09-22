@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { chartProvenanceSentence, type ReferenceCheck } from './reference-check';
+import type { ReferenceCheck } from './reference-check';
 import { rangeOf } from './source-range';
+import { chartProvenanceSentence } from './tag-provenance';
 
 /**
  * The diagnostics a document's checks call for. Only the two not-found

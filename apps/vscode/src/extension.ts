@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { ReadTextFile } from 'helm';
+import { CHART_METADATA_FILE_NAME, type ReadTextFile } from 'helm';
 import { localDockerCredentials, type CredentialEnvironment, type FetchLike } from 'oci-registry';
 import { diagnosticsFor } from './diagnostics';
 import { hoverFor } from './hover';
@@ -9,9 +9,10 @@ import { checkImageReferencesInDocument, checksAsOf, registriesNeedingLogin, typ
 
 const DIAGNOSTIC_COLLECTION_NAME = 'infra-tools-images';
 
-// Both spellings, because chart resolution accepts both and a watcher that
-// covered only one would leave half the charts in a workspace unwatched.
-const CHART_METADATA_GLOB = '**/Chart.{yaml,yml}';
+// Built from the name chart resolution looks for, rather than spelled out
+// again here: a watcher covering a different set of files than the resolver
+// reads is a staleness bug that shows up as nothing happening.
+const CHART_METADATA_GLOB = `**/${CHART_METADATA_FILE_NAME}`;
 
 interface ActivateDependencies {
   /** Only tests override this; production activation uses the platform's `fetch`. */
@@ -98,6 +99,11 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
    * Re-checks every open document whose last check read this metadata file.
    * A bumped `appVersion` otherwise leaves a stale checkmark standing at
    * exactly the moment the developer is relying on it.
+   *
+   * Only a document that already resolved through this chart qualifies. A
+   * chart appearing above a file checked without one would also change that
+   * file's answer, but catching it means re-resolving every open document on
+   * every write, and no ticket has asked for it yet.
    */
   async function recheckDocumentsGovernedBy(uri: vscode.Uri): Promise<void> {
     for (const document of vscode.workspace.textDocuments) {
@@ -112,7 +118,6 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   const chartMetadataWatcher = vscode.workspace.createFileSystemWatcher(CHART_METADATA_GLOB);
   context.subscriptions.push(chartMetadataWatcher);
   context.subscriptions.push(chartMetadataWatcher.onDidChange(recheckDocumentsGovernedBy));
-  context.subscriptions.push(chartMetadataWatcher.onDidCreate(recheckDocumentsGovernedBy));
 
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(

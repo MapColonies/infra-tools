@@ -224,10 +224,10 @@ describe('extension', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('should watch chart metadata under both spellings on activate', () => {
+  it('should watch the chart metadata name chart resolution actually reads', () => {
     activate(context, { fetch: vi.fn(), credentials: noDockerCredentials, readTextFile: NO_FILES });
 
-    expect(getLastFileSystemWatcher()?.globPattern).toBe('**/Chart.{yaml,yml}');
+    expect(getLastFileSystemWatcher()?.globPattern).toBe('**/Chart.yaml');
   });
 
   it('should re-check the documents a chart governs when its metadata changes, and leave the others alone', async () => {
