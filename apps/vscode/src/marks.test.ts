@@ -1,18 +1,22 @@
 import * as vscode from 'vscode';
 import { describe, expect, it, vi } from 'vitest';
-import type { SourceRange } from 'helm';
+import type { ResolvedTag, SourceRange } from 'helm';
+import type { ImageVerdict } from 'oci-registry';
 import { bumpVersion, createFakeDocument } from '../test/fake-document';
 import { createTextEditorStub, type TextEditorStub } from '../test/vscode-stub';
 import { applyMarks, createMarkDecorationType, marksFor } from './marks';
-import type { DocumentChecks, ReferenceCheck, ReferenceVerdict } from './reference-check';
+import type { DocumentChecks, ReferenceCheck } from './reference-check';
 
 const REPOSITORY = 'registry.example.com/svc';
 const TAG = '1.0';
 const VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, `  tag: "${TAG}"`, ''].join('\n');
 
-const VERIFIED_VERDICT: ReferenceVerdict = { kind: 'exists', registry: 'registry.example.com' };
-const MISSING_VERDICT: ReferenceVerdict = { kind: 'tag-not-found', repository: REPOSITORY, tag: TAG };
-const UNCHECKED_VERDICT: ReferenceVerdict = { kind: 'unverifiable', reason: 'network-error' };
+const VERIFIED_VERDICT: ImageVerdict = { kind: 'exists', registry: 'registry.example.com' };
+const MISSING_VERDICT: ImageVerdict = { kind: 'tag-not-found', repository: REPOSITORY, tag: TAG };
+const UNCHECKED_VERDICT: ImageVerdict = { kind: 'unverifiable', reason: 'network-error' };
+
+/** A tagless reference's tag comes from the governing chart, which is the only way one is checked at all. */
+const CHART_METADATA_TAG: ResolvedTag = { source: 'chart-metadata', text: TAG, metadataPath: '/repo/chart/Chart.yaml' };
 
 /** The source range of `text`'s first occurrence in {@link VALUES_YAML}. */
 function rangeOfText(text: string): SourceRange {
@@ -22,13 +26,14 @@ function rangeOfText(text: string): SourceRange {
 }
 
 /** A check over the single reference in {@link VALUES_YAML}, carrying that file's real offsets. */
-function createCheck(verdict: ReferenceVerdict): ReferenceCheck {
+function createCheck(verdict: ImageVerdict): ReferenceCheck {
   return {
     reference: {
       repository: { text: REPOSITORY, range: rangeOfText(REPOSITORY) },
       tag: { text: TAG, range: rangeOfText(TAG) },
       registry: undefined,
     },
+    tag: { source: 'file', text: TAG, range: rangeOfText(TAG) },
     verdict,
   };
 }
@@ -40,7 +45,7 @@ function asEditors(editors: readonly TextEditorStub[]): readonly vscode.TextEdit
 
 /** One document's stored checks, tagged with the version it currently has. */
 function createChecksByDocument(document: vscode.TextDocument, checks: readonly ReferenceCheck[]): Map<string, DocumentChecks> {
-  return new Map([[document.uri.toString(), { version: document.version, checks }]]);
+  return new Map([[document.uri.toString(), { version: document.version, checks, chartMetadataPath: undefined }]]);
 }
 
 /** An editor that throws the way a disposed one does. */
@@ -92,7 +97,7 @@ describe('marks', () => {
       registry: 'ghcr.io',
     };
 
-    const [mark] = marksFor(document, [{ reference, verdict: { kind: 'exists', registry: 'ghcr.io' } }]);
+    const [mark] = marksFor(document, [{ reference, tag: CHART_METADATA_TAG, verdict: { kind: 'exists', registry: 'ghcr.io' } }]);
 
     // The file says `ghcr.io` two lines up. Appending it restates the file.
     expect(mark?.renderOptions?.after?.contentText).toBe(' ✓');
@@ -107,7 +112,7 @@ describe('marks', () => {
       registry: undefined,
     };
 
-    const [mark] = marksFor(document, [{ reference, verdict: { kind: 'exists', registry: 'docker.io' } }]);
+    const [mark] = marksFor(document, [{ reference, tag: CHART_METADATA_TAG, verdict: { kind: 'exists', registry: 'docker.io' } }]);
 
     // A file that spells out no registry cannot have the answer restated to
     // it, so naming Docker Hub is the only way the mark says where it looked.

@@ -1,20 +1,22 @@
 import type * as vscode from 'vscode';
 import { describe, expect, it } from 'vitest';
-import type { SourceRange } from 'helm';
+import type { ResolvedTag, SourceRange } from 'helm';
+import type { ImageVerdict, UnverifiableReason } from 'oci-registry';
 import { createFakeDocument } from '../test/fake-document';
 import { hoverFor } from './hover';
-import type { ReferenceCheck, ReferenceVerdict, UncheckedReason } from './reference-check';
+import type { ReferenceCheck } from './reference-check';
 
 const REPOSITORY = 'registry.example.com/svc';
 const TAG = '1.0';
 const VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, `  tag: "${TAG}"`, ''].join('\n');
+const CHART_METADATA_PATH = '/repo/chart/Chart.yaml';
+const PROVENANCE_SENTENCE = ' Tag taken from appVersion in chart/Chart.yaml.';
 
-const VERIFIED_VERDICT: ReferenceVerdict = { kind: 'exists', registry: 'mirror.example.com' };
+const VERIFIED_VERDICT: ImageVerdict = { kind: 'exists', registry: 'mirror.example.com' };
 
 // The sentence each reason owes the reader, as a record so a new reason fails
 // the build here instead of hovering with someone else's explanation.
-const UNCHECKED_REASON_SENTENCES: Record<UncheckedReason, string> = {
-  'no-tag': 'the reference names no tag to check.',
+const UNCHECKED_REASON_SENTENCES: Record<UnverifiableReason, string> = {
   'guessed-registry': 'nothing here names a registry, and Docker Hub — the only one left to try — does not have it.',
   'needs-login': 'no local Docker credential for that registry. Run `docker login` against it.',
   'authentication-failure': 'the registry refused the local Docker credential for it.',
@@ -23,8 +25,13 @@ const UNCHECKED_REASON_SENTENCES: Record<UncheckedReason, string> = {
   'malformed-reference': 'the reference is not a valid image reference.',
 };
 
+/** Stands in for `vscode.workspace.asRelativePath`, shortening enough that a hover can be seen to have used it. */
+function describeChartPath(path: string): string {
+  return path.replace('/repo/', '');
+}
+
 /** The unverifiable verdict a reason produces. Only `needs-login` carries a registry, so the shape cannot be built generically. */
-function unverifiableVerdict(reason: UncheckedReason): ReferenceVerdict {
+function unverifiableVerdict(reason: UnverifiableReason): ImageVerdict {
   return reason === 'needs-login' ? { kind: 'unverifiable', reason, registry: 'registry.example.com' } : { kind: 'unverifiable', reason };
 }
 
@@ -36,32 +43,26 @@ function rangeOfText(text: string): SourceRange {
 }
 
 /** A check over the single reference in {@link VALUES_YAML}, carrying that file's real offsets. */
-function createCheck(verdict: ReferenceVerdict): ReferenceCheck {
+function createCheck(verdict: ImageVerdict, tag: ResolvedTag = { source: 'file', text: TAG, range: rangeOfText(TAG) }): ReferenceCheck {
   return {
     reference: {
       repository: { text: REPOSITORY, range: rangeOfText(REPOSITORY) },
-      tag: { text: TAG, range: rangeOfText(TAG) },
+      tag: tag.source === 'file' ? { text: tag.text, range: tag.range } : undefined,
       registry: undefined,
     },
+    tag,
     verdict,
   };
 }
 
-/** A check over the same reference written without a tag, which is what a `no-tag` verdict comes from. */
-function createTaglessCheck(verdict: ReferenceVerdict): ReferenceCheck {
-  return {
-    reference: {
-      repository: { text: REPOSITORY, range: rangeOfText(REPOSITORY) },
-      tag: undefined,
-      registry: undefined,
-    },
-    verdict,
-  };
+/** The same reference written without a tag, checked against the chart's `appVersion` instead. */
+function createChartMetadataCheck(verdict: ImageVerdict): ReferenceCheck {
+  return createCheck(verdict, { source: 'chart-metadata', text: TAG, metadataPath: CHART_METADATA_PATH });
 }
 
 /** The hover at the first character of `text`'s occurrence in {@link VALUES_YAML}. */
 function hoverAtText(document: vscode.TextDocument, checks: readonly ReferenceCheck[], text: string): vscode.Hover | undefined {
-  return hoverFor(document, document.positionAt(VALUES_YAML.indexOf(text)), checks);
+  return hoverFor(document, document.positionAt(VALUES_YAML.indexOf(text)), checks, describeChartPath);
 }
 
 /** The plain text of a hover's single content entry. */
@@ -87,18 +88,30 @@ describe('hover', () => {
   it('should render its own sentence for every reason a reference went unverified', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
 
-    for (const [reason, sentence] of Object.entries(UNCHECKED_REASON_SENTENCES) as [UncheckedReason, string][]) {
+    for (const [reason, sentence] of Object.entries(UNCHECKED_REASON_SENTENCES) as [UnverifiableReason, string][]) {
       const hoverText = getHoverText(hoverAtText(document, [createCheck(unverifiableVerdict(reason))], REPOSITORY));
 
       expect(hoverText).toBe(`Not verified: ${sentence}`);
     }
   });
 
-  it('should explain a tagless reference, which carries no tag to hover in the first place', () => {
+  it('should name the chart a tag was taken from, on a verified reference and an unverified one alike', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
-    const check = createTaglessCheck({ kind: 'unverifiable', reason: 'no-tag' });
+    const verified = createChartMetadataCheck(VERIFIED_VERDICT);
+    const unverified = createChartMetadataCheck(unverifiableVerdict('network-error'));
 
-    expect(getHoverText(hoverAtText(document, [check], REPOSITORY))).toContain('no tag');
+    // A checkmark earned by a tag the file never wrote is worth attributing:
+    // the hover is the only surface that can say where it came from.
+    expect(getHoverText(hoverAtText(document, [verified], REPOSITORY))).toBe(`Verified on \`mirror.example.com\`.${PROVENANCE_SENTENCE}`);
+    expect(getHoverText(hoverAtText(document, [unverified], REPOSITORY))).toBe(
+      `Not verified: ${UNCHECKED_REASON_SENTENCES['network-error']}${PROVENANCE_SENTENCE}`
+    );
+  });
+
+  it('should say nothing about a chart for a tag the file writes itself', () => {
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+
+    expect(getHoverText(hoverAtText(document, [createCheck(VERIFIED_VERDICT)], REPOSITORY))).not.toContain('appVersion');
   });
 
   it('should provide no hover for a reference that does not exist, which already speaks through its diagnostic', () => {
