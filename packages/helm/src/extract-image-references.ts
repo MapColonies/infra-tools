@@ -3,8 +3,8 @@ import { readUsableScalar, type RawScalar } from './raw-scalar';
 
 /**
  * A candidate image reference found in a Helm values file. `tag` is
- * `undefined` for a tagless reference — resolving it via `appVersion` is a
- * later ticket's job.
+ * `undefined` for a tagless reference, which `resolveTag` resolves through
+ * the governing chart's `appVersion`.
  */
 interface ImageReference {
   readonly repository: RawScalar;

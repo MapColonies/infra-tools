@@ -31,6 +31,11 @@ const TAGLESS_VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, '  pullPol
 // what they did before chart context existed.
 const NO_FILES = createFakeFileSystem({});
 
+/** Chart metadata declaring `appVersion`, for tests about what a bump re-checks. */
+function chartMetadataWithAppVersion(appVersion: string): string {
+  return ['apiVersion: v2', 'name: my-service', `appVersion: ${appVersion}`, ''].join('\n');
+}
+
 /** Stages `document` as the only visible editor, then fires the open event. */
 async function openInVisibleEditor(document: vscode.TextDocument): Promise<TextEditorStub> {
   const editor = createTextEditorStub(document);
@@ -230,16 +235,13 @@ describe('extension', () => {
     expect(getLastFileSystemWatcher()?.globPattern).toBe('**/Chart.yaml');
   });
 
-  it('should re-check the documents a chart governs when its metadata changes, and leave the others alone', async () => {
+  it('should re-check the documents a chart governs against its new appVersion, and leave the others alone', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
-    activate(context, {
-      fetch,
-      credentials: noDockerCredentials,
-      readTextFile: createFakeFileSystem({
-        '/repo/chart/Chart.yaml': ['apiVersion: v2', 'name: my-service', `appVersion: ${TAG}`, ''].join('\n'),
-        '/repo/other/Chart.yaml': ['apiVersion: v2', 'name: other', 'appVersion: 2.0.0', ''].join('\n'),
-      }),
-    });
+    const files: Record<string, string> = {
+      '/repo/chart/Chart.yaml': chartMetadataWithAppVersion('1.18'),
+      '/repo/other/Chart.yaml': ['apiVersion: v2', 'name: other', 'appVersion: 2.0.0', ''].join('\n'),
+    };
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: createFakeFileSystem(files) });
 
     const governed = createFakeDocument('/repo/chart/values.yaml', TAGLESS_VALUES_YAML);
     const unrelated = createFakeDocument(
@@ -252,11 +254,46 @@ describe('extension', () => {
     setOpenTextDocuments([governed, unrelated]);
     fetch.mockClear();
 
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion(TAG);
     await emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
 
     // A bumped `appVersion` is exactly when a stale checkmark costs the most,
     // and the chart nobody touched has nothing new to be asked about.
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith(`https://registry-1.docker.io/v2/library/nginx/manifests/${TAG}`, expect.anything());
+  });
+
+  it('should keep the latest re-check when an earlier one for the same document answers after it', async () => {
+    type FakeResponse = ReturnType<typeof fakeFetchResponse>;
+    let answerSlowRequest: (response: FakeResponse) => void = () => undefined;
+    const slowAnswer = new Promise<FakeResponse>((resolve) => {
+      answerSlowRequest = resolve;
+    });
+    const fetch = vi.fn(async (url: string) => (url.endsWith('/manifests/1.18') ? slowAnswer : Promise.resolve(fakeFetchResponse(200))));
+    const files: Record<string, string> = { '/repo/chart/Chart.yaml': chartMetadataWithAppVersion('1.17') };
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: createFakeFileSystem(files) });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', TAGLESS_VALUES_YAML);
+    await emitDidOpenTextDocument(document);
+    setOpenTextDocuments([document]);
+
+    // Two saves in quick succession, as autosave produces while typing a
+    // version: the first one's registry answer is still in flight when the
+    // second one lands.
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion('1.18');
+    const firstRecheck = emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/manifests\/1\.18$/), expect.anything());
+    });
+
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion(TAG);
+    await emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+
+    answerSlowRequest(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
+    await firstRecheck;
+
+    const setCalls = getLastDiagnosticCollection()?.set.mock.calls ?? [];
+
+    expect(setCalls[setCalls.length - 1]?.[1]).toEqual([]);
   });
 });

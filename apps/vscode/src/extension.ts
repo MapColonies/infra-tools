@@ -61,6 +61,10 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   context.subscriptions.push(diagnostics);
 
   const checksByDocument = new Map<string, DocumentChecks>();
+  // The most recent check started per document. A registry answer can land
+  // after a later check's, so only the latest check may publish.
+  const latestCheckByDocument = new Map<string, number>();
+  let checksStarted = 0;
   const markDecorationType = createMarkDecorationType();
   context.subscriptions.push(markDecorationType);
 
@@ -71,18 +75,26 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
    * Checks one document and republishes everything shown for it. The open
    * listener and the chart watcher both go through here, so the two can
    * never drift into publishing different things about the same document.
+   *
+   * A check superseded while it waited on a registry publishes nothing. Two
+   * `Chart.yaml` saves in quick succession would otherwise let the slower
+   * answer win, and that answer is about the `appVersion` already replaced.
    */
   async function checkDocument(document: vscode.TextDocument): Promise<void> {
+    const key = document.uri.toString();
+    const checkNumber = ++checksStarted;
+    latestCheckByDocument.set(key, checkNumber);
+
     // VS Code never awaits a listener, so anything escaping this callback
     // is an unhandled rejection, and that takes the extension host down.
     try {
       const checked = await checkImageReferencesInDocument(document, checkDependencies);
 
-      if (checked === undefined) {
+      if (checked === undefined || latestCheckByDocument.get(key) !== checkNumber) {
         return;
       }
 
-      checksByDocument.set(document.uri.toString(), checked);
+      checksByDocument.set(key, checked);
       diagnostics.set(document.uri, diagnosticsFor(document, checksAsOf(checked, document), vscode.workspace.asRelativePath));
       applyMarks(vscode.window.visibleTextEditors, checksByDocument, markDecorationType);
 
