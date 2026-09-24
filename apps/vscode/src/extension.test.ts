@@ -3,13 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeContext } from '../test/fake-context';
 import { noDockerCredentials } from '../test/fake-credentials';
 import { bumpVersion, createFakeDocument } from '../test/fake-document';
+import { createFakeFileSystem } from '../test/fake-file-system';
 import { fakeFetchResponse } from '../test/fake-fetch';
 import {
   createTextEditorStub,
+  emitDidChangeChartMetadata,
   emitDidChangeVisibleTextEditors,
   emitDidOpenTextDocument,
   getLastDiagnosticCollection,
+  getLastFileSystemWatcher,
   getRegisteredHoverProvider,
+  setOpenTextDocuments,
   setVisibleTextEditors,
   setWarningMessageAnswer,
   window,
@@ -20,6 +24,17 @@ import { activate, deactivate } from './extension';
 const REPOSITORY = 'docker.io/library/nginx';
 const TAG = '1.19';
 const VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, `  tag: ${TAG}`, ''].join('\n');
+const TAGLESS_VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, '  pullPolicy: IfNotPresent', ''].join('\n');
+
+// No chart metadata anywhere, so the fixtures named `values.yaml` resolve
+// through the filename fallback and the older tests keep describing exactly
+// what they did before chart context existed.
+const NO_FILES = createFakeFileSystem({});
+
+/** Chart metadata declaring `appVersion`, for tests about what a bump re-checks. */
+function chartMetadataWithAppVersion(appVersion: string): string {
+  return ['apiVersion: v2', 'name: my-service', `appVersion: ${appVersion}`, ''].join('\n');
+}
 
 /** Stages `document` as the only visible editor, then fires the open event. */
 async function openInVisibleEditor(document: vscode.TextDocument): Promise<TextEditorStub> {
@@ -79,12 +94,13 @@ describe('extension', () => {
     }
 
     setVisibleTextEditors([]);
+    setOpenTextDocuments([]);
     setWarningMessageAnswer(undefined);
     window.showWarningMessage.mockClear();
   });
 
   it('should create an output channel and register it for disposal on activate', () => {
-    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     expect(vscode.window.createOutputChannel).toHaveBeenCalledWith('Infra Tools');
     expect(context.subscriptions.length).toBeGreaterThanOrEqual(1);
@@ -95,20 +111,20 @@ describe('extension', () => {
   });
 
   it('should register a yaml hover provider on activate', () => {
-    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     expect(vscode.languages.registerHoverProvider).toHaveBeenCalledWith({ language: 'yaml' }, expect.anything());
   });
 
   it('should create one mark decoration type on activate', () => {
-    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     expect(vscode.window.createTextEditorDecorationType).toHaveBeenCalledWith({ after: { margin: '0 0 0 0.5em' } });
   });
 
   it('should set both diagnostics and marks when a values file opens', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
-    activate(context, { fetch, credentials: noDockerCredentials });
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     const editor = await openInVisibleEditor(document);
@@ -121,7 +137,7 @@ describe('extension', () => {
 
   it('should hover a checked reference, and stop once the document has been edited past the check', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
-    activate(context, { fetch, credentials: noDockerCredentials });
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     await openInVisibleEditor(document);
@@ -135,7 +151,7 @@ describe('extension', () => {
 
   it('should re-apply marks to an editor that becomes visible after the document was checked', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
-    activate(context, { fetch, credentials: noDockerCredentials });
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
 
@@ -150,7 +166,7 @@ describe('extension', () => {
 
   it('should survive an editor disposed mid-check, since an unhandled rejection kills the extension host', async () => {
     const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
-    activate(context, { fetch, credentials: noDockerCredentials });
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
     const disposedEditor: TextEditorStub = {
@@ -167,14 +183,14 @@ describe('extension', () => {
   });
 
   it('should create a status bar item on activate', () => {
-    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     expect(vscode.window.createStatusBarItem).toHaveBeenCalled();
   });
 
   it('should notify, and raise no diagnostic, for a registry with no local credential', async () => {
     const fetch = vi.fn();
-    activate(context, { fetch, credentials: noDockerCredentials });
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     const document = createFakeDocument(
       '/repo/chart/values.yaml',
@@ -194,7 +210,7 @@ describe('extension', () => {
   });
 
   it('should notify once per registry across files, not once per file', async () => {
-    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     const values = ['image:', '  repository: private.example.com/svc', '  tag: 1.0.0', ''].join('\n');
 
@@ -206,10 +222,78 @@ describe('extension', () => {
 
   it('should issue no request for a document that is not a values file', async () => {
     const fetch = vi.fn();
-    activate(context, { fetch, credentials: noDockerCredentials });
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
 
     await emitDidOpenTextDocument(createFakeDocument('/repo/chart/deployment.yaml', VALUES_YAML));
 
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('should watch the chart metadata name chart resolution actually reads', () => {
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    expect(getLastFileSystemWatcher()?.globPattern).toBe('**/Chart.yaml');
+  });
+
+  it('should re-check the documents a chart governs against its new appVersion, and leave the others alone', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    const files: Record<string, string> = {
+      '/repo/chart/Chart.yaml': chartMetadataWithAppVersion('1.18'),
+      '/repo/other/Chart.yaml': ['apiVersion: v2', 'name: other', 'appVersion: 2.0.0', ''].join('\n'),
+    };
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: createFakeFileSystem(files) });
+
+    const governed = createFakeDocument('/repo/chart/values.yaml', TAGLESS_VALUES_YAML);
+    const unrelated = createFakeDocument(
+      '/repo/other/values.yaml',
+      ['image:', '  repository: docker.io/library/redis', '  pullPolicy: Always', ''].join('\n')
+    );
+
+    await emitDidOpenTextDocument(governed);
+    await emitDidOpenTextDocument(unrelated);
+    setOpenTextDocuments([governed, unrelated]);
+    fetch.mockClear();
+
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion(TAG);
+    await emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+
+    // A bumped `appVersion` is exactly when a stale checkmark costs the most,
+    // and the chart nobody touched has nothing new to be asked about.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(`https://registry-1.docker.io/v2/library/nginx/manifests/${TAG}`, expect.anything());
+  });
+
+  it('should keep the latest re-check when an earlier one for the same document answers after it', async () => {
+    type FakeResponse = ReturnType<typeof fakeFetchResponse>;
+    let answerSlowRequest: (response: FakeResponse) => void = () => undefined;
+    const slowAnswer = new Promise<FakeResponse>((resolve) => {
+      answerSlowRequest = resolve;
+    });
+    const fetch = vi.fn(async (url: string) => (url.endsWith('/manifests/1.18') ? slowAnswer : Promise.resolve(fakeFetchResponse(200))));
+    const files: Record<string, string> = { '/repo/chart/Chart.yaml': chartMetadataWithAppVersion('1.17') };
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: createFakeFileSystem(files) });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', TAGLESS_VALUES_YAML);
+    await emitDidOpenTextDocument(document);
+    setOpenTextDocuments([document]);
+
+    // Two saves in quick succession, as autosave produces while typing a
+    // version: the first one's registry answer is still in flight when the
+    // second one lands.
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion('1.18');
+    const firstRecheck = emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+    await vi.waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/manifests\/1\.18$/), expect.anything());
+    });
+
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion(TAG);
+    await emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+
+    answerSlowRequest(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
+    await firstRecheck;
+
+    const setCalls = getLastDiagnosticCollection()?.set.mock.calls ?? [];
+
+    expect(setCalls[setCalls.length - 1]?.[1]).toEqual([]);
   });
 });

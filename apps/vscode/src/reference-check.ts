@@ -1,53 +1,33 @@
 import type * as vscode from 'vscode';
-import { extractImageReferences, type ImageReference } from 'helm';
-import { checkImageExistence, type CredentialEnvironment, type FetchLike, type ImageVerdict, type UnverifiableReason } from 'oci-registry';
-
-// Matching any YAML file beneath a chart directory, and excluding that
-// chart's templates directory, is Helm chart-context knowledge this ticket
-// doesn't implement yet.
-const VALUES_FILE_NAME_PATTERN = /^values\.ya?ml$/i;
-
-/** Every reason the registry package reports, plus the ones settled before asking it. */
-type UncheckedReason = UnverifiableReason | 'no-tag';
-
-/**
- * A registry verdict, or the one outcome the extension settles itself.
- *
- * `ImageVerdict` is taken whole rather than picked apart, so the registry
- * package's own split — only `'needs-login'` carries a host — survives the
- * trip to the UI instead of being flattened into an optional field the
- * notification code would then have to re-check.
- */
-type ReferenceVerdict = ImageVerdict | { readonly kind: 'unverifiable'; readonly reason: 'no-tag' };
+import { extractImageReferences, resolveTag, resolveValuesFileContext, type ImageReference, type ReadTextFile, type ResolvedTag } from 'helm';
+import { checkImageExistence, type CredentialEnvironment, type FetchLike, type ImageVerdict } from 'oci-registry';
 
 /**
  * One checked reference, projected onto all three surfaces, so diagnostics,
  * marks, and hovers can never disagree about a reference.
+ *
+ * The resolved tag rides along because it is not always in the file: a tag
+ * taken from `appVersion` has a chart to name and no range to underline, and
+ * both of those are decisions a surface has to make per reference.
  */
 interface ReferenceCheck {
   readonly reference: ImageReference;
-  readonly verdict: ReferenceVerdict;
+  readonly tag: ResolvedTag;
+  readonly verdict: ImageVerdict;
 }
 
 /** A document's checks, tagged with the document version they describe. */
 interface DocumentChecks {
   readonly version: number;
   readonly checks: readonly ReferenceCheck[];
-}
-
-function isHelmValuesFile(document: vscode.TextDocument): boolean {
-  if (document.languageId !== 'yaml') {
-    return false;
-  }
-
-  const fileName = document.uri.path.split('/').pop() ?? '';
-
-  return VALUES_FILE_NAME_PATTERN.test(fileName);
+  /** The metadata file whose `appVersion` these checks may depend on. */
+  readonly chartMetadataPath: string | undefined;
 }
 
 interface CheckDependencies {
   readonly fetch: FetchLike;
   readonly credentials: CredentialEnvironment;
+  readonly readTextFile: ReadTextFile;
 }
 
 /**
@@ -55,13 +35,23 @@ interface CheckDependencies {
  * nothing to say about the document at all, which is not the same as a
  * checked document that produced no findings: the caller replaces a
  * document's diagnostics and marks only when it gets checks back.
+ *
+ * Which documents those are is the Helm package's call, not this file's — a
+ * values file is anything beneath a chart directory, and that is chart
+ * knowledge a future CLI would otherwise have to reimplement.
  */
 async function checkImageReferencesInDocument(document: vscode.TextDocument, dependencies: CheckDependencies): Promise<DocumentChecks | undefined> {
-  if (!isHelmValuesFile(document)) {
+  if (document.languageId !== 'yaml') {
     return undefined;
   }
 
-  const { fetch, credentials } = dependencies;
+  const { fetch, credentials, readTextFile } = dependencies;
+  const context = await resolveValuesFileContext(document.uri.path, readTextFile);
+
+  if (context === undefined) {
+    return undefined;
+  }
+
   const version = document.version;
 
   // No guard around this: the extractor collects YAML syntax errors rather
@@ -69,26 +59,31 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, dep
   // open listener's own catch covers a genuine fault.
   const references = extractImageReferences(document.getText());
 
-  // A tagless reference has nothing to ask a registry until `appVersion`
-  // resolution lands, but it still comes through as a check. Dropping it is
-  // what made real references render nothing, which reads as a broken tool.
+  // A reference that resolves to no tag at all is dropped here rather than
+  // carried as an outcome: there is nothing to ask a registry and nothing
+  // truthful to render, and a mark that says only "unchecked" on a file the
+  // developer cannot act on is noise they would switch the feature off over.
+  const resolved = references.flatMap((reference) => {
+    const tag = resolveTag(reference, context.chart);
+
+    return tag === undefined ? [] : [{ reference, tag }];
+  });
+
   const checks = await Promise.all(
-    references.map(async (reference) => ({
+    resolved.map(async ({ reference, tag }) => ({
       reference,
-      verdict:
-        reference.tag === undefined
-          ? ({ kind: 'unverifiable', reason: 'no-tag' } as const)
-          : await checkImageExistence({
-              repository: reference.repository.text,
-              tag: reference.tag.text,
-              declaredRegistry: reference.registry,
-              fetch,
-              credentials,
-            }),
+      tag,
+      verdict: await checkImageExistence({
+        repository: reference.repository.text,
+        tag: tag.text,
+        declaredRegistry: reference.registry,
+        fetch,
+        credentials,
+      }),
     }))
   );
 
-  return { version, checks };
+  return { version, checks, chartMetadataPath: context.chart?.path };
 }
 
 /**
@@ -120,5 +115,5 @@ function registriesNeedingLogin(checks: readonly ReferenceCheck[]): string[] {
   return [...registries];
 }
 
-export { checkImageReferencesInDocument, checksAsOf, isHelmValuesFile, registriesNeedingLogin };
-export type { DocumentChecks, ReferenceCheck, ReferenceVerdict, UncheckedReason };
+export { checkImageReferencesInDocument, checksAsOf, registriesNeedingLogin };
+export type { DocumentChecks, ReferenceCheck };

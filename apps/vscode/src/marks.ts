@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ImageReference } from 'helm';
-import { resolveExplicitHost } from 'oci-registry';
-import { checksAsOf, type DocumentChecks, type ReferenceCheck, type ReferenceVerdict } from './reference-check';
+import { resolveExplicitHost, type ImageVerdict } from 'oci-registry';
+import { checksAsOf, type DocumentChecks, type ReferenceCheck } from './reference-check';
 import { rangeOf } from './source-range';
 
 type MarkKind = 'verified' | 'missing' | 'unchecked';
@@ -16,7 +16,7 @@ const MARKS: Record<MarkKind, { readonly glyph: string; readonly color: string }
 };
 
 /** Exhaustive, so a new verdict kind fails the build here. */
-function markKindOf(verdict: ReferenceVerdict): MarkKind {
+function markKindOf(verdict: ImageVerdict): MarkKind {
   switch (verdict.kind) {
     case 'exists':
       return 'verified';
@@ -42,7 +42,7 @@ function registryNamedByFile(reference: ImageReference): string | undefined {
  * The answering registry, named only when it differs from the one the file
  * names, so the mark carries information instead of restating the line.
  */
-function registrySuffixOf(reference: ImageReference, verdict: ReferenceVerdict): string {
+function registrySuffixOf(reference: ImageReference, verdict: ImageVerdict): string {
   if (verdict.kind !== 'exists' || verdict.registry === registryNamedByFile(reference)) {
     return '';
   }

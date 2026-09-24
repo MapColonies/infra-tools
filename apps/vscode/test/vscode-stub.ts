@@ -283,8 +283,50 @@ function getLastTerminal(): TerminalStub | undefined {
   return terminals[terminals.length - 1];
 }
 
+/**
+ * Test-only stand-in for `vscode.FileSystemWatcher`. The glob it was created
+ * with is recorded, because which files a watcher covers is as much of the
+ * extension's behaviour as what it does when one changes. Each of the three
+ * events is a separate emitter, so a test firing a change never drives a
+ * create listener that would have re-run the same work.
+ */
+interface FileSystemWatcherStub {
+  readonly globPattern: string;
+  readonly onDidChange: (listener: (uri: unknown) => unknown) => { dispose: () => void };
+  readonly onDidCreate: (listener: (uri: unknown) => unknown) => { dispose: () => void };
+  readonly onDidDelete: (listener: (uri: unknown) => unknown) => { dispose: () => void };
+  readonly dispose: ReturnType<typeof vi.fn>;
+  /** Test-only: drives the change listeners and awaits them. Not part of the real `vscode` API. */
+  readonly fireDidChange: (uri: unknown) => Promise<void>;
+}
+
+const fileSystemWatchers: FileSystemWatcherStub[] = [];
+
+function createFileSystemWatcherStub(globPattern: string): FileSystemWatcherStub {
+  const didChange = createEventEmitterStub<unknown>();
+  const didCreate = createEventEmitterStub<unknown>();
+  const didDelete = createEventEmitterStub<unknown>();
+  const watcher: FileSystemWatcherStub = {
+    globPattern,
+    onDidChange: didChange.event,
+    onDidCreate: didCreate.event,
+    onDidDelete: didDelete.event,
+    dispose: vi.fn(),
+    fireDidChange: didChange.fire,
+  };
+
+  fileSystemWatchers.push(watcher);
+
+  return watcher;
+}
+
 const workspace = {
   onDidOpenTextDocument: onDidOpenTextDocumentEmitter.event,
+  textDocuments: [] as readonly unknown[],
+  // The real one shortens a path against the open workspace folders. There
+  // are none here, and a test asserting on a message wants the path it wrote.
+  asRelativePath: vi.fn((path: string) => path),
+  createFileSystemWatcher: vi.fn((globPattern: string) => createFileSystemWatcherStub(globPattern)),
 };
 
 /**
@@ -294,6 +336,29 @@ const workspace = {
  */
 async function emitDidOpenTextDocument(document: unknown): Promise<void> {
   await onDidOpenTextDocumentEmitter.fire(document);
+}
+
+/**
+ * Test-only helper that replaces `workspace.textDocuments`. Not part of the
+ * real `vscode` API — tests set it to stage which documents the editor holds
+ * open, and reset it so one test's documents never leak into another.
+ */
+function setOpenTextDocuments(documents: readonly unknown[]): void {
+  workspace.textDocuments = documents;
+}
+
+/** Test-only helper: the most recently created file system watcher. */
+function getLastFileSystemWatcher(): FileSystemWatcherStub | undefined {
+  return fileSystemWatchers[fileSystemWatchers.length - 1];
+}
+
+/**
+ * Test-only helper that fires the most recent watcher's `onDidChange` and
+ * awaits every registered listener, standing in for a developer saving a
+ * chart's metadata file.
+ */
+async function emitDidChangeChartMetadata(uri: unknown): Promise<void> {
+  await getLastFileSystemWatcher()?.fireDidChange(uri);
 }
 
 /**
@@ -314,14 +379,16 @@ async function emitDidChangeVisibleTextEditors(editors: readonly TextEditorStub[
   await onDidChangeVisibleTextEditorsEmitter.fire(editors);
 }
 
-export type { StatusBarItemStub, TerminalStub, TextEditorStub };
+export type { FileSystemWatcherStub, StatusBarItemStub, TerminalStub, TextEditorStub };
 export {
   createTextEditorStub,
   Diagnostic,
   DiagnosticSeverity,
+  emitDidChangeChartMetadata,
   emitDidChangeVisibleTextEditors,
   emitDidOpenTextDocument,
   getLastDiagnosticCollection,
+  getLastFileSystemWatcher,
   getLastStatusBarItem,
   getLastTerminal,
   getRegisteredHoverProvider,
@@ -330,6 +397,7 @@ export {
   MarkdownString,
   Position,
   Range,
+  setOpenTextDocuments,
   setVisibleTextEditors,
   setWarningMessageAnswer,
   StatusBarAlignment,
