@@ -19,8 +19,12 @@ interface RepositoryLocation {
   readonly name: string;
 }
 
-/** How the registry a reference was checked against was arrived at. */
-type RegistrySource = 'explicit' | 'declared' | 'docker-hub-fallback';
+/**
+ * How the registry a reference was checked against was arrived at.
+ * `'override'` is a registry from the workspace's override set, which
+ * replaces whatever the file names.
+ */
+type RegistrySource = 'explicit' | 'declared' | 'docker-hub-fallback' | 'override';
 
 /** A repository string resolved to a registry host and a name on it, kept with how that host was arrived at. */
 interface ResolvedReference extends RepositoryLocation {
@@ -72,15 +76,36 @@ function resolveExplicitHost(repository: string): RepositoryLocation | undefined
  * source distinguishes the two.
  */
 function resolveReference(repository: string, declaredRegistry: string | undefined): ResolvedReference | undefined {
-  const reference = selectRegistry(repository, declaredRegistry);
+  return normalizeDockerHubName(selectRegistry(repository, declaredRegistry));
+}
 
+/**
+ * Resolves a repository string onto one registry from the override set,
+ * discarding whatever host the file names or declares: the override
+ * replaces it, so only the image's name on that host carries over.
+ * `undefined` means the name or the override host is malformed.
+ */
+function resolveOverrideReference(repository: string, overrideRegistry: string): ResolvedReference | undefined {
+  const name = resolveExplicitHost(repository)?.name ?? repository;
+
+  if (!HOST_PATTERN.test(overrideRegistry) || !NAME_PATTERN.test(name)) {
+    return undefined;
+  }
+
+  return normalizeDockerHubName({ host: overrideRegistry, name, source: 'override' });
+}
+
+/**
+ * Applies Docker's `library/` namespace to a single-segment name on Docker
+ * Hub, however the host was arrived at, since Hub serves the long form only.
+ */
+function normalizeDockerHubName(reference: ResolvedReference | undefined): ResolvedReference | undefined {
   if (reference === undefined || !isDockerHub(reference.host) || reference.name.includes('/')) {
     return reference;
   }
 
-  // Docker's own normalization, applied however the host was arrived at:
-  // `nginx`, `docker.io/nginx` and a declared registry of `docker.io` all
-  // address `library/nginx`, and Hub serves the long form only.
+  // `nginx`, `docker.io/nginx` and a declared or override registry of
+  // `docker.io` all address `library/nginx`.
   return { ...reference, name: `${DOCKER_HUB_LIBRARY_NAMESPACE}/${reference.name}` };
 }
 
@@ -109,5 +134,5 @@ function selectRegistry(repository: string, declaredRegistry: string | undefined
   return HOST_PATTERN.test(declaredRegistry) ? { host: declaredRegistry, name: repository, source: 'declared' } : undefined;
 }
 
-export { resolveExplicitHost, resolveReference };
+export { resolveExplicitHost, resolveOverrideReference, resolveReference };
 export type { RepositoryLocation, ResolvedReference };

@@ -61,11 +61,17 @@ type UnverifiableVerdict =
  * `'guessed-registry'` downgrade relies on: a not-found this package does
  * not trust is moved into the kind that says nothing, which is only a safe
  * move because that kind is guaranteed to stay silent.
+ *
+ * A not-found carries `overrideRegistries` when the registry override set
+ * redirected the check, naming every registry that was asked. Without it, a
+ * message about a line naming production reads as though production was
+ * checked. `'exists'` needs no such field: its `registry` already names
+ * where the image was found, override or not.
  */
 type ImageVerdict =
   | { readonly kind: 'exists'; readonly registry: string }
-  | { readonly kind: 'repository-not-found'; readonly repository: string }
-  | { readonly kind: 'tag-not-found'; readonly repository: string; readonly tag: string }
+  | { readonly kind: 'repository-not-found'; readonly repository: string; readonly overrideRegistries?: readonly string[] }
+  | { readonly kind: 'tag-not-found'; readonly repository: string; readonly tag: string; readonly overrideRegistries?: readonly string[] }
   | UnverifiableVerdict;
 
 export type { ImageVerdict, UnverifiableReason };

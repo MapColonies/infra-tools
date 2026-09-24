@@ -3,7 +3,7 @@ import type { CredentialEnvironment, RegistryCredential } from './credentials';
 import { registryEndpoint } from './docker-hub';
 import { isPublicRegistry, resolveRegistryCredential } from './credentials';
 import type { FetchLike, FetchResponseLike } from './fetch-like';
-import { resolveReference } from './resolve-reference';
+import { resolveOverrideReference, resolveReference } from './resolve-reference';
 import type { ResolvedReference } from './resolve-reference';
 import type { ImageVerdict } from './verdict';
 
@@ -40,6 +40,13 @@ interface CheckImageExistenceParams {
    * resolvable reference into a Docker Hub guess.
    */
   readonly declaredRegistry: string | undefined;
+  /**
+   * The workspace's registry override set. Non-empty, it replaces the
+   * registry the file names — explicit or declared — and the reference is
+   * checked against every entry; empty, resolution falls back to the file.
+   * Required for the same reason `declaredRegistry` is.
+   */
+  readonly overrideRegistries: readonly string[];
   readonly fetch: FetchLike;
   readonly credentials: CredentialEnvironment;
 }
@@ -59,16 +66,32 @@ interface CheckImageExistenceParams {
  * own doc comment in `verdict.ts` records why. A positive answer from the
  * guess still stands, so public images keep verifying.
  *
+ * A non-empty `overrideRegistries` replaces all three steps. Every entry is
+ * asked, and the image exists if any of them has it; the first in declared
+ * order is credited. The set replaces the file's registry rather than adding
+ * to it, so an unreachable production registry the file names cannot keep a
+ * reference red while the developer pushes somewhere else. None of the
+ * entries is a guess, so none of their not-founds is downgraded.
+ *
  * Credentials come from the local Docker config and nowhere else: this
  * package never prompts, and never invents one. Anything it cannot resolve,
  * reach, or interpret comes back as `'unverifiable'`, never as a false
  * negative.
  */
 async function checkImageExistence(params: CheckImageExistenceParams): Promise<ImageVerdict> {
-  const { repository, tag, declaredRegistry, fetch, credentials } = params;
+  const { repository, tag, declaredRegistry, overrideRegistries, fetch, credentials } = params;
+
+  if (!TAG_PATTERN.test(tag)) {
+    return { kind: 'unverifiable', reason: 'malformed-reference' };
+  }
+
+  if (overrideRegistries.length > 0) {
+    return checkOverrideRegistries({ repository, tag, overrideRegistries, fetch, credentials });
+  }
+
   const reference = resolveReference(repository, declaredRegistry);
 
-  if (reference === undefined || !TAG_PATTERN.test(tag)) {
+  if (reference === undefined) {
     return { kind: 'unverifiable', reason: 'malformed-reference' };
   }
 
@@ -77,6 +100,51 @@ async function checkImageExistence(params: CheckImageExistenceParams): Promise<I
   const answeredNotFound = verdict.kind === 'repository-not-found' || verdict.kind === 'tag-not-found';
 
   return registryWasGuessed && answeredNotFound ? { kind: 'unverifiable', reason: 'guessed-registry' } : verdict;
+}
+
+type CheckOverrideRegistriesParams = Omit<CheckImageExistenceParams, 'declaredRegistry'>;
+
+/**
+ * Asks every registry in the override set, concurrently, and folds the
+ * answers into one verdict.
+ *
+ * A not-found is reported only when every registry answered one, because a
+ * registry that could not answer may be exactly where the image was pushed;
+ * otherwise the verdict is unverifiable, preferring `'needs-login'` since it
+ * is the one reason the developer can act on. A repository found anywhere
+ * makes a miss a missing tag rather than a missing repository.
+ */
+async function checkOverrideRegistries(params: CheckOverrideRegistriesParams): Promise<ImageVerdict> {
+  const { repository, tag, fetch, credentials } = params;
+  const overrideRegistries = [...new Set(params.overrideRegistries)];
+
+  const verdicts = await Promise.all(
+    overrideRegistries.map(async (overrideRegistry): Promise<ImageVerdict> => {
+      const reference = resolveOverrideReference(repository, overrideRegistry);
+
+      return reference === undefined
+        ? { kind: 'unverifiable', reason: 'malformed-reference' }
+        : checkResolvedReference({ repository, reference, tag, fetch, credentials });
+    })
+  );
+
+  const found = verdicts.find((verdict) => verdict.kind === 'exists');
+
+  if (found !== undefined) {
+    return found;
+  }
+
+  const unverifiable =
+    verdicts.find((verdict) => verdict.kind === 'unverifiable' && verdict.reason === 'needs-login') ??
+    verdicts.find((verdict) => verdict.kind === 'unverifiable');
+
+  if (unverifiable !== undefined) {
+    return unverifiable;
+  }
+
+  return verdicts.some((verdict) => verdict.kind === 'tag-not-found')
+    ? { kind: 'tag-not-found', repository, tag, overrideRegistries }
+    : { kind: 'repository-not-found', repository, overrideRegistries };
 }
 
 interface CheckResolvedReferenceParams {
