@@ -8,18 +8,23 @@ import { fakeFetchResponse } from '../test/fake-fetch';
 import {
   createTextEditorStub,
   emitDidChangeChartMetadata,
+  emitDidChangeConfiguration,
   emitDidChangeVisibleTextEditors,
   emitDidOpenTextDocument,
   getLastDiagnosticCollection,
   getLastFileSystemWatcher,
   getRegisteredHoverProvider,
+  getStatusBarItems,
+  setConfiguration,
   setOpenTextDocuments,
   setVisibleTextEditors,
   setWarningMessageAnswer,
   window,
+  type StatusBarItemStub,
   type TextEditorStub,
 } from '../test/vscode-stub';
 import { activate, deactivate } from './extension';
+import { REGISTRY_OVERRIDES_SETTING } from './registry-overrides';
 
 const REPOSITORY = 'docker.io/library/nginx';
 const TAG = '1.19';
@@ -63,6 +68,13 @@ function hoverAt(document: vscode.TextDocument, offset: number): vscode.Hover | 
   return getRegisteredHoverProvider()?.provideHover(document, document.positionAt(offset)) as vscode.Hover | undefined;
 }
 
+/** The most recent status bar item that has ever announced overrides, found by the icon it shows them with. */
+function getOverrideStatusBarItem(): StatusBarItemStub | undefined {
+  return getStatusBarItems()
+    .filter((item) => item.text.startsWith('$(arrow-swap)'))
+    .at(-1);
+}
+
 /** Asserts a diagnostics `.set()` call carried exactly one diagnostic, and returns it. */
 function getSingleDiagnostic(fileDiagnostics: readonly vscode.Diagnostic[] | undefined): vscode.Diagnostic {
   expect(fileDiagnostics).toHaveLength(1);
@@ -95,6 +107,7 @@ describe('extension', () => {
 
     setVisibleTextEditors([]);
     setOpenTextDocuments([]);
+    setConfiguration({});
     setWarningMessageAnswer(undefined);
     window.showWarningMessage.mockClear();
   });
@@ -218,6 +231,71 @@ describe('extension', () => {
     await emitDidOpenTextDocument(createFakeDocument('/repo/chart-b/values.yaml', values));
 
     expect(window.showWarningMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('should check only the declared override registries, and name the matching one on the checkmark', async () => {
+    setConfiguration({ [REGISTRY_OVERRIDES_SETTING]: ['quay.io'] });
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    const editor = await openInVisibleEditor(createFakeDocument('/repo/chart/values.yaml', VALUES_YAML));
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith('https://quay.io/v2/library/nginx/manifests/1.19', expect.anything());
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓ quay.io');
+  });
+
+  it('should name the override in the diagnostic when no override registry has the tag', async () => {
+    setConfiguration({ [REGISTRY_OVERRIDES_SETTING]: ['quay.io'] });
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    await openInVisibleEditor(createFakeDocument('/repo/chart/values.yaml', VALUES_YAML));
+    const diagnostic = getSingleDiagnostic(getLastDiagnosticCollection()?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined);
+
+    expect(diagnostic.message).toContain('Registry override in effect: checked only quay.io.');
+  });
+
+  it('should show the override status bar item on activate while overrides are declared', () => {
+    setConfiguration({ [REGISTRY_OVERRIDES_SETTING]: ['ghcr.io', 'quay.io'] });
+    activate(context, { fetch: vi.fn(), credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    expect(getOverrideStatusBarItem()?.visible).toBe(true);
+    expect(getOverrideStatusBarItem()?.text).toBe('$(arrow-swap) 2');
+  });
+
+  it('should re-check open documents and refresh the status bar when the override setting changes', async () => {
+    setConfiguration({ [REGISTRY_OVERRIDES_SETTING]: ['quay.io'] });
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    setOpenTextDocuments([document]);
+    const editor = await openInVisibleEditor(document);
+    fetch.mockClear();
+
+    await emitDidChangeConfiguration({ [REGISTRY_OVERRIDES_SETTING]: [] });
+
+    // Back to the file's own registry: a checkmark earned on the override
+    // must not outlive the override.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith('https://registry-1.docker.io/v2/library/nginx/manifests/1.19', expect.anything());
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+    expect(getOverrideStatusBarItem()?.visible).toBe(false);
+  });
+
+  it('should ignore a settings change that does not touch the override set', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    setOpenTextDocuments([document]);
+    await emitDidOpenTextDocument(document);
+    fetch.mockClear();
+
+    await emitDidChangeConfiguration({ 'editor.fontSize': 14 });
+
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it('should issue no request for a document that is not a values file', async () => {

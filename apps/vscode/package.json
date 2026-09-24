@@ -21,6 +21,21 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "contributes": {
+    "configuration": {
+      "title": "Infra Tools",
+      "properties": {
+        "infraTools.registries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Registry hostnames that replace the registry a Helm values file names when checking its image references. An image counts as existing if any of them has it. Leave empty to check against the registry the file names."
+        }
+      }
+    }
+  },
   "scripts": {
     "format": "prettier --ignore-path ../../.prettierignore --check .",
     "format:fix": "prettier --ignore-path ../../.prettierignore --write .",

@@ -27,6 +27,8 @@ interface DocumentChecks {
 interface CheckDependencies {
   readonly fetch: FetchLike;
   readonly credentials: CredentialEnvironment;
+  /** The registry override set in effect for this check; empty when none is declared. */
+  readonly overrideRegistries: readonly string[];
   readonly readTextFile: ReadTextFile;
 }
 
@@ -45,7 +47,7 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, dep
     return undefined;
   }
 
-  const { fetch, credentials, readTextFile } = dependencies;
+  const { fetch, credentials, overrideRegistries, readTextFile } = dependencies;
   const context = await resolveValuesFileContext(document.uri.path, readTextFile);
 
   if (context === undefined) {
@@ -77,6 +79,7 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, dep
         repository: reference.repository.text,
         tag: tag.text,
         declaredRegistry: reference.registry,
+        overrideRegistries,
         fetch,
         credentials,
       }),

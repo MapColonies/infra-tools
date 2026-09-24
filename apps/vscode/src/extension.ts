@@ -6,6 +6,7 @@ import { hoverFor } from './hover';
 import { createLoginPrompts } from './login-prompts';
 import { applyMarks, createMarkDecorationType } from './marks';
 import { checkImageReferencesInDocument, checksAsOf, registriesNeedingLogin, type DocumentChecks } from './reference-check';
+import { createOverrideStatus, readOverrideRegistries, REGISTRY_OVERRIDES_SETTING } from './registry-overrides';
 
 const DIAGNOSTIC_COLLECTION_NAME = 'infra-tools-images';
 
@@ -44,8 +45,9 @@ async function readWorkspaceTextFile(path: string): Promise<string | undefined> 
 
 /**
  * Called by the extension host on activation. Wires the three surfaces a
- * check is shown on, re-checks a Helm values file whenever one opens, and
- * re-checks the files a chart governs whenever its metadata changes.
+ * check is shown on, re-checks a Helm values file whenever one opens,
+ * re-checks the files a chart governs whenever its metadata changes, and
+ * re-checks every checked file whenever the registry override set changes.
  */
 function activate(context: vscode.ExtensionContext, dependencies: ActivateDependencies = {}): void {
   const channel = vscode.window.createOutputChannel('Infra Tools');
@@ -71,6 +73,10 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   const loginPrompts = createLoginPrompts(context.globalState);
   context.subscriptions.push(loginPrompts);
 
+  const overrideStatus = createOverrideStatus();
+  context.subscriptions.push(overrideStatus);
+  overrideStatus.update(readOverrideRegistries());
+
   /**
    * Checks one document and republishes everything shown for it. The open
    * listener and the chart watcher both go through here, so the two can
@@ -88,7 +94,9 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
     // VS Code never awaits a listener, so anything escaping this callback
     // is an unhandled rejection, and that takes the extension host down.
     try {
-      const checked = await checkImageReferencesInDocument(document, checkDependencies);
+      // Read per check rather than once at activation, so a check never
+      // runs against an override set the developer has since changed.
+      const checked = await checkImageReferencesInDocument(document, { ...checkDependencies, overrideRegistries: readOverrideRegistries() });
 
       if (checked === undefined || latestCheckByDocument.get(key) !== checkNumber) {
         return;
@@ -125,7 +133,27 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
     }
   }
 
+  /**
+   * Re-checks every open document already checked, and refreshes the status
+   * bar, when the override set changes. A checkmark earned on a registry the
+   * developer has just removed from the set must not outlive it.
+   */
+  async function applyOverrideChange(event: vscode.ConfigurationChangeEvent): Promise<void> {
+    if (!event.affectsConfiguration(REGISTRY_OVERRIDES_SETTING)) {
+      return;
+    }
+
+    overrideStatus.update(readOverrideRegistries());
+
+    for (const document of vscode.workspace.textDocuments) {
+      if (checksByDocument.has(document.uri.toString())) {
+        await checkDocument(document);
+      }
+    }
+  }
+
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(checkDocument));
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(applyOverrideChange));
 
   const chartMetadataWatcher = vscode.workspace.createFileSystemWatcher(CHART_METADATA_GLOB);
   context.subscriptions.push(chartMetadataWatcher);
