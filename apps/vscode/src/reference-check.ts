@@ -1,6 +1,7 @@
 import type * as vscode from 'vscode';
 import { extractImageReferences, resolveTag, resolveValuesFileContext, type ImageReference, type ReadTextFile, type ResolvedTag } from 'helm';
 import { checkImageExistence, type CredentialEnvironment, type FetchLike, type ImageVerdict } from 'oci-registry';
+import type { VerdictCache } from './verdict-cache';
 
 /**
  * One checked reference, projected onto all three surfaces, so diagnostics,
@@ -30,6 +31,8 @@ interface CheckDependencies {
   /** The registry override set in effect for this check; empty when none is declared. */
   readonly overrideRegistries: readonly string[];
   readonly readTextFile: ReadTextFile;
+  /** Verdicts already answered, consulted before any registry is asked. */
+  readonly verdictCache: VerdictCache;
 }
 
 /**
@@ -47,7 +50,7 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, dep
     return undefined;
   }
 
-  const { fetch, credentials, overrideRegistries, readTextFile } = dependencies;
+  const { fetch, credentials, overrideRegistries, readTextFile, verdictCache } = dependencies;
   const context = await resolveValuesFileContext(document.uri.path, readTextFile);
 
   if (context === undefined) {
@@ -72,18 +75,14 @@ async function checkImageReferencesInDocument(document: vscode.TextDocument, dep
   });
 
   const checks = await Promise.all(
-    resolved.map(async ({ reference, tag }) => ({
-      reference,
-      tag,
-      verdict: await checkImageExistence({
-        repository: reference.repository.text,
-        tag: tag.text,
-        declaredRegistry: reference.registry,
-        overrideRegistries,
-        fetch,
-        credentials,
-      }),
-    }))
+    resolved.map(async ({ reference, tag }) => {
+      const query = { repository: reference.repository.text, tag: tag.text, declaredRegistry: reference.registry, overrideRegistries };
+      const verdict = await verdictCache.verdictFor(query, tag.source === 'chart-metadata' ? tag.metadataPath : undefined, async () =>
+        checkImageExistence({ ...query, fetch, credentials })
+      );
+
+      return { reference, tag, verdict };
+    })
   );
 
   return { version, checks, chartMetadataPath: context.chart?.path };
