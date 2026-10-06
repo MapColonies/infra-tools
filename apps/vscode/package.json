@@ -32,6 +32,11 @@
           },
           "default": [],
           "markdownDescription": "Registry hostnames that replace the registry a Helm values file names when checking its image references. An image counts as existing if any of them has it. Leave empty to check against the registry the file names."
+        },
+        "infraTools.warnOnLatestTag": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Warn when a Helm values file pins an image to the `latest` tag. Switching this off does not affect checking whether the image exists."
         }
       }
     }

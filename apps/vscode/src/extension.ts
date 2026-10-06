@@ -3,6 +3,7 @@ import { CHART_METADATA_FILE_NAME, type ReadTextFile } from 'helm';
 import { localDockerCredentials, type CredentialEnvironment, type FetchLike } from 'oci-registry';
 import { diagnosticsFor } from './diagnostics';
 import { hoverFor } from './hover';
+import { LATEST_TAG_WARNING_SETTING, readWarnOnLatestTag } from './latest-tag-setting';
 import { createLoginPrompts } from './login-prompts';
 import { applyMarks, createMarkDecorationType } from './marks';
 import { checkImageReferencesInDocument, checksAsOf, registriesNeedingLogin, type DocumentChecks } from './reference-check';
@@ -46,8 +47,9 @@ async function readWorkspaceTextFile(path: string): Promise<string | undefined> 
 /**
  * Called by the extension host on activation. Wires the three surfaces a
  * check is shown on, re-checks a Helm values file whenever one opens,
- * re-checks the files a chart governs whenever its metadata changes, and
- * re-checks every checked file whenever the registry override set changes.
+ * re-checks the files a chart governs whenever its metadata changes,
+ * re-checks every checked file whenever the registry override set changes,
+ * and republishes their diagnostics whenever the `latest` warning is switched.
  */
 function activate(context: vscode.ExtensionContext, dependencies: ActivateDependencies = {}): void {
   const channel = vscode.window.createOutputChannel('Infra Tools');
@@ -77,6 +79,17 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   context.subscriptions.push(overrideStatus);
   overrideStatus.update(readOverrideRegistries());
 
+  /** Publishes a document's diagnostics from checks already made, under the settings in effect now. */
+  function publishDiagnostics(document: vscode.TextDocument, checked: DocumentChecks): void {
+    diagnostics.set(
+      document.uri,
+      diagnosticsFor(document, checksAsOf(checked, document), {
+        describeChartPath: vscode.workspace.asRelativePath,
+        warnOnLatestTag: readWarnOnLatestTag(),
+      })
+    );
+  }
+
   /**
    * Checks one document and republishes everything shown for it. The open
    * listener and the chart watcher both go through here, so the two can
@@ -103,7 +116,7 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
       }
 
       checksByDocument.set(key, checked);
-      diagnostics.set(document.uri, diagnosticsFor(document, checksAsOf(checked, document), vscode.workspace.asRelativePath));
+      publishDiagnostics(document, checked);
       applyMarks(vscode.window.visibleTextEditors, checksByDocument, markDecorationType);
 
       // Not awaited: a notification stays up until the developer answers
@@ -152,8 +165,28 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
     }
   }
 
+  /**
+   * Republishes every checked open document's diagnostics when the `latest`
+   * warning is switched. The rule reads the file, not a registry, so the
+   * checks already made still stand and nothing is asked again.
+   */
+  function applyLatestTagWarningChange(event: vscode.ConfigurationChangeEvent): void {
+    if (!event.affectsConfiguration(LATEST_TAG_WARNING_SETTING)) {
+      return;
+    }
+
+    for (const document of vscode.workspace.textDocuments) {
+      const checked = checksByDocument.get(document.uri.toString());
+
+      if (checked !== undefined) {
+        publishDiagnostics(document, checked);
+      }
+    }
+  }
+
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(checkDocument));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(applyOverrideChange));
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(applyLatestTagWarningChange));
 
   const chartMetadataWatcher = vscode.workspace.createFileSystemWatcher(CHART_METADATA_GLOB);
   context.subscriptions.push(chartMetadataWatcher);
