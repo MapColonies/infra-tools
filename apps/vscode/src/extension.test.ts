@@ -24,11 +24,13 @@ import {
   type TextEditorStub,
 } from '../test/vscode-stub';
 import { activate, deactivate } from './extension';
+import { LATEST_TAG_WARNING_SETTING } from './latest-tag-setting';
 import { REGISTRY_OVERRIDES_SETTING } from './registry-overrides';
 
 const REPOSITORY = 'docker.io/library/nginx';
 const TAG = '1.19';
 const VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, `  tag: ${TAG}`, ''].join('\n');
+const LATEST_VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, '  tag: latest', ''].join('\n');
 const TAGLESS_VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, '  pullPolicy: IfNotPresent', ''].join('\n');
 
 // No chart metadata anywhere, so the fixtures named `values.yaml` resolve
@@ -296,6 +298,77 @@ describe('extension', () => {
     await emitDidChangeConfiguration({ 'editor.fontSize': 14 });
 
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('should warn on a latest tag by default, and still check it exists', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    await openInVisibleEditor(createFakeDocument('/repo/chart/values.yaml', LATEST_VALUES_YAML));
+    const fileDiagnostics = getLastDiagnosticCollection()?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined;
+
+    expect(fetch).toHaveBeenCalledWith('https://registry-1.docker.io/v2/library/nginx/manifests/latest', expect.anything());
+    expect(fileDiagnostics?.map(({ severity }) => severity)).toEqual(
+      expect.arrayContaining([vscode.DiagnosticSeverity.Error, vscode.DiagnosticSeverity.Warning])
+    );
+    expect(fileDiagnostics).toHaveLength(2);
+  });
+
+  it('should warn on a quoted latest tag, underlining the tag inside the quotes', async () => {
+    const yaml = ['image:', `  repository: ${REPOSITORY}`, '  tag: "latest"', ''].join('\n');
+    const document = createFakeDocument('/repo/chart/values.yaml', yaml);
+    activate(context, { fetch: vi.fn().mockResolvedValue(fakeFetchResponse(200)), credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    await openInVisibleEditor(document);
+    const diagnostic = getSingleDiagnostic(getLastDiagnosticCollection()?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined);
+    const start = yaml.indexOf('latest');
+
+    expect(diagnostic.severity).toBe(vscode.DiagnosticSeverity.Warning);
+    expect(diagnostic.range).toEqual(new vscode.Range(document.positionAt(start), document.positionAt(start + 'latest'.length)));
+  });
+
+  it('should not warn on latest pinned to a digest, since what deploys can no longer drift', async () => {
+    const yaml = ['image:', `  repository: ${REPOSITORY}`, `  tag: latest@sha256:${'a'.repeat(64)}`, ''].join('\n');
+    activate(context, { fetch: vi.fn().mockResolvedValue(fakeFetchResponse(200)), credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    await openInVisibleEditor(createFakeDocument('/repo/chart/values.yaml', yaml));
+    const fileDiagnostics = getLastDiagnosticCollection()?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined;
+
+    expect(fileDiagnostics?.filter(({ severity }) => severity === vscode.DiagnosticSeverity.Warning)).toEqual([]);
+  });
+
+  it('should not warn on a latest tag while the setting is off, and still check it exists', async () => {
+    setConfiguration({ [LATEST_TAG_WARNING_SETTING]: false });
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] }));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    await openInVisibleEditor(createFakeDocument('/repo/chart/values.yaml', LATEST_VALUES_YAML));
+    const diagnostic = getSingleDiagnostic(getLastDiagnosticCollection()?.set.mock.calls[0]?.[1] as vscode.Diagnostic[] | undefined);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(diagnostic.severity).toBe(vscode.DiagnosticSeverity.Error);
+  });
+
+  it('should republish diagnostics without asking a registry again when the latest warning setting changes', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', LATEST_VALUES_YAML);
+    setOpenTextDocuments([document]);
+    await openInVisibleEditor(document);
+    fetch.mockClear();
+
+    await emitDidChangeConfiguration({ [LATEST_TAG_WARNING_SETTING]: false });
+
+    // A style rule changed, not a registry answer, so nothing is re-asked.
+    expect(fetch).not.toHaveBeenCalled();
+    expect(getLastDiagnosticCollection()?.set.mock.calls.at(-1)?.[1]).toEqual([]);
+
+    await emitDidChangeConfiguration({ [LATEST_TAG_WARNING_SETTING]: true });
+
+    expect(getSingleDiagnostic(getLastDiagnosticCollection()?.set.mock.calls.at(-1)?.[1] as vscode.Diagnostic[] | undefined).severity).toBe(
+      vscode.DiagnosticSeverity.Warning
+    );
   });
 
   it('should issue no request for a document that is not a values file', async () => {
