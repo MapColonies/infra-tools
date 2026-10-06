@@ -91,6 +91,24 @@ describe('diagnostics', () => {
     expect(fileDiagnostics[0]?.message).toBe(`Tag '${TAG}' not found in '${REPOSITORY}'. Tag taken from appVersion in chart/Chart.yaml.`);
   });
 
+  it('should name the registry override set when it redirected a tag check, since the Problems panel shows nothing else', () => {
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    const check = createCheck({ kind: 'tag-not-found', repository: REPOSITORY, tag: TAG, overrideRegistries: ['ghcr.io', 'quay.io'] });
+    const fileDiagnostics = diagnosticsFor(document, [check], describeChartPath);
+
+    expect(fileDiagnostics[0]?.message).toBe(
+      `Tag '${TAG}' not found in '${REPOSITORY}'. Registry override in effect: checked only ghcr.io, quay.io.`
+    );
+  });
+
+  it('should name the registry override set when it redirected a repository check', () => {
+    const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+    const check = createCheck({ kind: 'repository-not-found', repository: REPOSITORY, overrideRegistries: ['ghcr.io'] });
+    const fileDiagnostics = diagnosticsFor(document, [check], describeChartPath);
+
+    expect(fileDiagnostics[0]?.message).toBe(`Repository '${REPOSITORY}' not found. Registry override in effect: checked only ghcr.io.`);
+  });
+
   it('should report nothing for a reference that exists', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
 

@@ -32,7 +32,7 @@ const ONE_CHART = createFakeFileSystem({ '/repo/chart/Chart.yaml': CHART_YAML })
 
 /** Checks a document this feature is expected to have something to say about. */
 async function checkValuesFile(document: vscode.TextDocument, fetch: FetchLike, readTextFile: ReadTextFile = NO_FILES): Promise<DocumentChecks> {
-  const checked = await checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, readTextFile });
+  const checked = await checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, overrideRegistries: [], readTextFile });
 
   if (checked === undefined) {
     throw new Error('expected the document to be checked');
@@ -47,7 +47,7 @@ describe('reference-check', () => {
     const document = createFakeDocument('/repo/chart/deployment.yaml', VALUES_YAML);
 
     await expect(
-      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES })
+      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, overrideRegistries: [], readTextFile: NO_FILES })
     ).resolves.toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -57,7 +57,7 @@ describe('reference-check', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML, 'plaintext');
 
     await expect(
-      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES })
+      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, overrideRegistries: [], readTextFile: NO_FILES })
     ).resolves.toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -77,7 +77,7 @@ describe('reference-check', () => {
     const document = createFakeDocument('/repo/chart/templates/values.yaml', VALUES_YAML);
 
     await expect(
-      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, readTextFile: ONE_CHART })
+      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, overrideRegistries: [], readTextFile: ONE_CHART })
     ).resolves.toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -192,6 +192,22 @@ describe('reference-check', () => {
 
     expect(fetch).toHaveBeenCalledWith('https://ghcr.io/v2/my-org/my-service/manifests/1.0.0', expect.anything());
     expect(checks[0]?.verdict).toEqual({ kind: 'exists', registry: 'ghcr.io' });
+  });
+
+  it('should check against the registry override set in place of the registry the document declares', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    const document = createFakeDocument('/repo/chart/values.yaml', DECLARED_REGISTRY_VALUES_YAML);
+
+    const checked = await checkImageReferencesInDocument(document, {
+      fetch,
+      credentials: noDockerCredentials,
+      overrideRegistries: ['quay.io'],
+      readTextFile: NO_FILES,
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith('https://quay.io/v2/my-org/my-service/manifests/1.0.0', expect.anything());
+    expect(checked?.checks[0]?.verdict).toEqual({ kind: 'exists', registry: 'quay.io' });
   });
 
   it('should leave a bare repository Docker Hub has never heard of unverifiable rather than missing', async () => {

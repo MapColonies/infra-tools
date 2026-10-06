@@ -94,6 +94,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -113,6 +114,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -135,6 +137,7 @@ describe('checkImageExistence', () => {
       repository: 'ghcr.io/example/does-not-exist',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -149,6 +152,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: 'does-not-exist',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -167,6 +171,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -181,6 +186,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -196,6 +202,7 @@ describe('checkImageExistence', () => {
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -210,6 +217,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -224,6 +232,7 @@ describe('checkImageExistence', () => {
       repository: 'nginx',
       tag: 'latest',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -239,6 +248,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/nginx',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -257,6 +267,7 @@ describe('checkImageExistence', () => {
       repository: 'example/app',
       tag: '1.0.0',
       declaredRegistry: 'ghcr.io',
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -272,6 +283,7 @@ describe('checkImageExistence', () => {
       repository: 'quay.io/example/app',
       tag: '1.0.0',
       declaredRegistry: 'ghcr.io',
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -287,6 +299,7 @@ describe('checkImageExistence', () => {
       repository: 'localhost:5000/svc',
       tag: '1.0.0',
       declaredRegistry: 'ghcr.io',
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'localhost:5000': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -302,6 +315,7 @@ describe('checkImageExistence', () => {
       repository: 'bitnami/nginx',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -320,6 +334,7 @@ describe('checkImageExistence', () => {
       repository: 'discrete-agent',
       tag: 'v3.2.1',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -337,6 +352,7 @@ describe('checkImageExistence', () => {
       repository: 'discrete-agent',
       tag: 'v3.2.1',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -351,6 +367,7 @@ describe('checkImageExistence', () => {
       repository: 'example/does-not-exist',
       tag: '1.0.0',
       declaredRegistry: 'ghcr.io',
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -368,6 +385,7 @@ describe('checkImageExistence', () => {
       repository: 'Not A Name',
       tag: '1.0.0',
       declaredRegistry: 'ghcr.io',
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -383,6 +401,7 @@ describe('checkImageExistence', () => {
       repository: 'example/app',
       tag: '1.0.0',
       declaredRegistry: '',
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -398,6 +417,7 @@ describe('checkImageExistence', () => {
       repository: 'example/app',
       tag: '1.0.0',
       declaredRegistry: 'https://registry.example.com',
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -416,6 +436,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io@evil.example/library/nginx',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -431,6 +452,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/../secrets',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -449,6 +471,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '../../other',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -474,6 +497,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -514,6 +538,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', auths: { 'https://private.example.com': {} } },
@@ -550,6 +575,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', credHelpers: { 'private.example.com': 'acr-env' } },
@@ -585,6 +611,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({
         config: {
@@ -629,6 +656,7 @@ describe('checkImageExistence', () => {
       repository: 'myorg.azurecr.io/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({
         config: {
@@ -678,6 +706,7 @@ describe('checkImageExistence', () => {
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -707,6 +736,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 'expired') } } } }),
     });
@@ -721,6 +751,7 @@ describe('checkImageExistence', () => {
       repository: 'ghcr.io/example/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials(),
     });
@@ -741,6 +772,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -764,6 +796,7 @@ describe('checkImageExistence', () => {
       repository: 'localhost:5000/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'localhost:5000': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -792,6 +825,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({
         config: { credsStore: 'desktop', auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } },
@@ -821,6 +855,7 @@ describe('checkImageExistence', () => {
       repository: 'docker.io/library/nginx',
       tag: '1.19',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({
         config: { auths: { 'https://index.docker.io/v1/': { auth: encodeAuth('hub-user', 'hub-secret') } } },
@@ -860,6 +895,7 @@ describe('checkImageExistence', () => {
       repository: 'myorg.azurecr.io/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({
         config: {
@@ -888,6 +924,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({ config: { auths: { 'private.example.com': { auth: encodeAuth('dev', 's3cret') } } } }),
     });
@@ -926,6 +963,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({ config: { credHelpers: { 'private.example.com': 'acr-env' } }, runCredentialHelper }),
     });
@@ -949,6 +987,7 @@ describe('checkImageExistence', () => {
       repository: 'private.example.com/app',
       tag: '1.0.0',
       declaredRegistry: undefined,
+      overrideRegistries: [],
       fetch,
       credentials: fakeDockerCredentials({
         configText: `{ "auths": { "private.example.com": { "auth": "${encodeAuth('dev', 's3cret')}" }, } }`,
@@ -957,5 +996,228 @@ describe('checkImageExistence', () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(verdict).toEqual({ kind: 'unverifiable', reason: 'needs-login', registry: 'private.example.com' });
+  });
+});
+
+/** A fetch answering each manifest URL from `responses`, rejecting any URL the test did not expect to be asked about. */
+function fetchByUrl(responses: Readonly<Record<string, FetchResponseLike>>): ReturnType<typeof vi.fn<FetchLike>> {
+  // eslint-disable-next-line @typescript-eslint/promise-function-async -- canned responses, nothing to await
+  return vi.fn<FetchLike>((url) => {
+    const response = responses[url];
+
+    return response === undefined ? Promise.reject(new Error(`unexpected request to ${url}`)) : Promise.resolve(response);
+  });
+}
+
+/** Every URL a fake fetch was asked for, sorted, because the override set is queried concurrently. */
+function requestedUrls(fetch: ReturnType<typeof vi.fn<FetchLike>>): string[] {
+  return fetch.mock.calls.map(([url]) => url).sort();
+}
+
+const GHCR_MANIFEST_URL = 'https://ghcr.io/v2/team/app/manifests/1.0.0';
+const QUAY_MANIFEST_URL = 'https://quay.io/v2/team/app/manifests/1.0.0';
+const EXISTS = fakeFetchResponse({ status: 200, body: { schemaVersion: 2 } });
+const MANIFEST_UNKNOWN = fakeFetchResponse({ status: 404, body: distributionError('MANIFEST_UNKNOWN') });
+const NAME_UNKNOWN = fakeFetchResponse({ status: 404, body: distributionError('NAME_UNKNOWN') });
+
+describe('checkImageExistence with a registry override set', () => {
+  it('should query every override registry instead of the host the repository names, crediting the one that has it', async () => {
+    const fetch = fetchByUrl({ [GHCR_MANIFEST_URL]: MANIFEST_UNKNOWN, [QUAY_MANIFEST_URL]: EXISTS });
+
+    const verdict = await checkImageExistence({
+      repository: 'registry.prod.example.com/team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['ghcr.io', 'quay.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual([GHCR_MANIFEST_URL, QUAY_MANIFEST_URL]);
+    expect(verdict).toEqual({ kind: 'exists', registry: 'quay.io' });
+  });
+
+  it('should replace a registry the document declares, not add to it', async () => {
+    const fetch = fetchByUrl({ [GHCR_MANIFEST_URL]: EXISTS });
+
+    const verdict = await checkImageExistence({
+      repository: 'team/app',
+      tag: '1.0.0',
+      declaredRegistry: 'registry.prod.example.com',
+      overrideRegistries: ['ghcr.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual([GHCR_MANIFEST_URL]);
+    expect(verdict).toEqual({ kind: 'exists', registry: 'ghcr.io' });
+  });
+
+  it('should credit the first override registry in settings order when more than one has the image', async () => {
+    const fetch = fetchByUrl({ [GHCR_MANIFEST_URL]: EXISTS, [QUAY_MANIFEST_URL]: EXISTS });
+
+    const verdict = await checkImageExistence({
+      repository: 'team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['quay.io', 'ghcr.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual([GHCR_MANIFEST_URL, QUAY_MANIFEST_URL]);
+    expect(verdict).toEqual({ kind: 'exists', registry: 'quay.io' });
+  });
+
+  it('should report tag-not-found naming the override set when no override registry has the tag', async () => {
+    const fetch = fetchByUrl({ [GHCR_MANIFEST_URL]: NAME_UNKNOWN, [QUAY_MANIFEST_URL]: MANIFEST_UNKNOWN });
+
+    const verdict = await checkImageExistence({
+      repository: 'registry.prod.example.com/team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['ghcr.io', 'quay.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    // The repository exists on one of them, so it is the tag that is
+    // missing — the fix is a version, not a name.
+    expect(requestedUrls(fetch)).toEqual([GHCR_MANIFEST_URL, QUAY_MANIFEST_URL]);
+    expect(verdict).toEqual({
+      kind: 'tag-not-found',
+      repository: 'registry.prod.example.com/team/app',
+      tag: '1.0.0',
+      overrideRegistries: ['ghcr.io', 'quay.io'],
+    });
+  });
+
+  it('should report repository-not-found naming the override set when no override registry has the repository', async () => {
+    const fetch = fetchByUrl({ [GHCR_MANIFEST_URL]: NAME_UNKNOWN, [QUAY_MANIFEST_URL]: NAME_UNKNOWN });
+
+    const verdict = await checkImageExistence({
+      repository: 'team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['ghcr.io', 'quay.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual([GHCR_MANIFEST_URL, QUAY_MANIFEST_URL]);
+    expect(verdict).toEqual({ kind: 'repository-not-found', repository: 'team/app', overrideRegistries: ['ghcr.io', 'quay.io'] });
+  });
+
+  it('should trust a not-found for a name the file gave no registry, because the settings named where to look', async () => {
+    const fetch = fetchByUrl({ 'https://ghcr.io/v2/discrete-agent/manifests/v3.2.1': MANIFEST_UNKNOWN });
+
+    const verdict = await checkImageExistence({
+      repository: 'discrete-agent',
+      tag: 'v3.2.1',
+      declaredRegistry: undefined,
+      overrideRegistries: ['ghcr.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual(['https://ghcr.io/v2/discrete-agent/manifests/v3.2.1']);
+    expect(verdict).toEqual({ kind: 'tag-not-found', repository: 'discrete-agent', tag: 'v3.2.1', overrideRegistries: ['ghcr.io'] });
+  });
+
+  it('should report unverifiable, never a not-found, when one override registry could not answer', async () => {
+    // Quay is absent from the table, so its request rejects the way an unreachable host does.
+    const fetch = fetchByUrl({ [GHCR_MANIFEST_URL]: MANIFEST_UNKNOWN });
+
+    const verdict = await checkImageExistence({
+      repository: 'team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['ghcr.io', 'quay.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    // The unreachable one may be exactly where the image was pushed.
+    expect(requestedUrls(fetch)).toEqual([GHCR_MANIFEST_URL, QUAY_MANIFEST_URL]);
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'network-error' });
+  });
+
+  it('should report needs-login for an override registry with no credential, so the developer is prompted for it', async () => {
+    const fetch = fetchByUrl({ [GHCR_MANIFEST_URL]: MANIFEST_UNKNOWN });
+
+    const verdict = await checkImageExistence({
+      repository: 'team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['ghcr.io', 'dev.example.com'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual([GHCR_MANIFEST_URL]);
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'needs-login', registry: 'dev.example.com' });
+  });
+
+  it('should still credit a registry that has the image when another override registry could not answer', async () => {
+    const fetch = fetchByUrl({ [QUAY_MANIFEST_URL]: EXISTS });
+
+    const verdict = await checkImageExistence({
+      repository: 'team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['dev.example.com', 'quay.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual([QUAY_MANIFEST_URL]);
+    expect(verdict).toEqual({ kind: 'exists', registry: 'quay.io' });
+  });
+
+  it('should address a single-segment name on an override Docker Hub under the library namespace', async () => {
+    const fetch = fetchByUrl({ 'https://registry-1.docker.io/v2/library/nginx/manifests/1.19': EXISTS });
+
+    const verdict = await checkImageExistence({
+      repository: 'registry.prod.example.com/nginx',
+      tag: '1.19',
+      declaredRegistry: undefined,
+      overrideRegistries: ['docker.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual(['https://registry-1.docker.io/v2/library/nginx/manifests/1.19']);
+    expect(verdict).toEqual({ kind: 'exists', registry: 'docker.io' });
+  });
+
+  it('should query an override registry listed twice only once', async () => {
+    const fetch = fetchByUrl({ [GHCR_MANIFEST_URL]: EXISTS });
+
+    await checkImageExistence({
+      repository: 'team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['ghcr.io', 'ghcr.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(requestedUrls(fetch)).toEqual([GHCR_MANIFEST_URL]);
+  });
+
+  it('should report malformed-reference without issuing a request when an override registry is not a valid host', async () => {
+    const fetch = vi.fn<FetchLike>();
+
+    const verdict = await checkImageExistence({
+      repository: 'team/app',
+      tag: '1.0.0',
+      declaredRegistry: undefined,
+      overrideRegistries: ['https://ghcr.io'],
+      fetch,
+      credentials: fakeDockerCredentials(),
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(verdict).toEqual({ kind: 'unverifiable', reason: 'malformed-reference' });
   });
 });

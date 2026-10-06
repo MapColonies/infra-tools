@@ -273,6 +273,11 @@ function setWarningMessageAnswer(answer: string | undefined): void {
   warningMessageAnswer = answer;
 }
 
+/** Test-only helper: every status bar item created so far, oldest first. */
+function getStatusBarItems(): readonly StatusBarItemStub[] {
+  return statusBarItems;
+}
+
 /** Test-only helper: the most recently created status bar item. */
 function getLastStatusBarItem(): StatusBarItemStub | undefined {
   return statusBarItems[statusBarItems.length - 1];
@@ -320,8 +325,23 @@ function createFileSystemWatcherStub(globPattern: string): FileSystemWatcherStub
   return watcher;
 }
 
+// Settings a test has staged, keyed by their full dotted name, standing in
+// for the merged user and workspace settings the real API reads.
+let configurationValues = new Map<string, unknown>();
+
+/** The part of a `vscode.ConfigurationChangeEvent` the extension reads. */
+interface ConfigurationChangeEventStub {
+  readonly affectsConfiguration: (section: string) => boolean;
+}
+
+const onDidChangeConfigurationEmitter = createEventEmitterStub<ConfigurationChangeEventStub>();
+
 const workspace = {
   onDidOpenTextDocument: onDidOpenTextDocumentEmitter.event,
+  onDidChangeConfiguration: onDidChangeConfigurationEmitter.event,
+  getConfiguration: vi.fn((section: string) => ({
+    get: (key: string, fallback?: unknown): unknown => configurationValues.get(`${section}.${key}`) ?? fallback,
+  })),
   textDocuments: [] as readonly unknown[],
   // The real one shortens a path against the open workspace folders. There
   // are none here, and a test asserting on a message wants the path it wrote.
@@ -345,6 +365,29 @@ async function emitDidOpenTextDocument(document: unknown): Promise<void> {
  */
 function setOpenTextDocuments(documents: readonly unknown[]): void {
   workspace.textDocuments = documents;
+}
+
+/**
+ * Test-only helper that replaces every staged setting, keyed by full dotted
+ * name. Not part of the real `vscode` API. Reset it between tests, or one
+ * test's override set redirects the next test's checks.
+ */
+function setConfiguration(values: Readonly<Record<string, unknown>>): void {
+  configurationValues = new Map(Object.entries(values));
+}
+
+/**
+ * Test-only helper that stages `values` as the new settings, then fires
+ * `workspace.onDidChangeConfiguration` for every section they changed, the
+ * order real VS Code uses, and awaits every listener.
+ */
+async function emitDidChangeConfiguration(values: Readonly<Record<string, unknown>>): Promise<void> {
+  const changed = new Set([...configurationValues.keys(), ...Object.keys(values)]);
+
+  setConfiguration(values);
+  await onDidChangeConfigurationEmitter.fire({
+    affectsConfiguration: (section) => [...changed].some((key) => key === section || key.startsWith(`${section}.`)),
+  });
 }
 
 /** Test-only helper: the most recently created file system watcher. */
@@ -385,18 +428,21 @@ export {
   Diagnostic,
   DiagnosticSeverity,
   emitDidChangeChartMetadata,
+  emitDidChangeConfiguration,
   emitDidChangeVisibleTextEditors,
   emitDidOpenTextDocument,
   getLastDiagnosticCollection,
   getLastFileSystemWatcher,
   getLastStatusBarItem,
   getLastTerminal,
+  getStatusBarItems,
   getRegisteredHoverProvider,
   Hover,
   languages,
   MarkdownString,
   Position,
   Range,
+  setConfiguration,
   setOpenTextDocuments,
   setVisibleTextEditors,
   setWarningMessageAnswer,
