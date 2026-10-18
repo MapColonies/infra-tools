@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { createFakeContext } from '../test/fake-context';
 import { noDockerCredentials } from '../test/fake-credentials';
-import { bumpVersion, createFakeDocument } from '../test/fake-document';
+import { bumpVersion, createFakeDocument, editDocument } from '../test/fake-document';
 import { createFakeFileSystem } from '../test/fake-file-system';
 import { fakeFetchResponse } from '../test/fake-fetch';
 import {
   createTextEditorStub,
   emitDidChangeChartMetadata,
   emitDidChangeConfiguration,
+  emitDidChangeTextDocument,
   emitDidChangeVisibleTextEditors,
   emitDidOpenTextDocument,
   getLastDiagnosticCollection,
@@ -29,7 +30,7 @@ import { REGISTRY_OVERRIDES_SETTING } from './registry-overrides';
 
 const REPOSITORY = 'docker.io/library/nginx';
 const TAG = '1.19';
-const VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, `  tag: ${TAG}`, ''].join('\n');
+const VALUES_YAML = valuesWithTag(TAG);
 const LATEST_VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, '  tag: latest', ''].join('\n');
 const TAGLESS_VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, '  pullPolicy: IfNotPresent', ''].join('\n');
 
@@ -37,6 +38,11 @@ const TAGLESS_VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, '  pullPol
 // through the filename fallback and the older tests keep describing exactly
 // what they did before chart context existed.
 const NO_FILES = createFakeFileSystem({});
+
+/** A values file naming one image, pinned to `tag`. */
+function valuesWithTag(tag: string): string {
+  return ['image:', `  repository: ${REPOSITORY}`, `  tag: ${tag}`, ''].join('\n');
+}
 
 const SECOND_MS = 1000;
 const MINUTE_MS = 60 * SECOND_MS;
@@ -634,5 +640,164 @@ describe('extension', () => {
     const setCalls = getLastDiagnosticCollection()?.set.mock.calls ?? [];
 
     expect(setCalls[setCalls.length - 1]?.[1]).toEqual([]);
+  });
+
+  describe('while typing', () => {
+    const PAUSE_MS = 750;
+    const OTHER_TAG = '1.20';
+
+    // Only timeouts are faked: `settle` below waits on a real `setImmediate`,
+    // so a check that has been let through runs to the end on its own.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Comfortably more turns than a check chains promises — chart resolution,
+    // the cache, the token challenge, the request — so it always finishes.
+    const SETTLE_ROUNDS = 20;
+
+    /** Lets every promise a check chains — file reads, registry requests — finish. */
+    async function settle(): Promise<void> {
+      for (let round = 0; round < SETTLE_ROUNDS; round += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+
+    /** Types `text` into `document`, as one keystroke that leaves it that way. */
+    async function typeInto(document: vscode.TextDocument, text: string): Promise<void> {
+      editDocument(document, text);
+      await emitDidChangeTextDocument(document);
+    }
+
+    /** The diagnostics most recently published for any document. */
+    function lastPublishedDiagnostics(): readonly vscode.Diagnostic[] | undefined {
+      return getLastDiagnosticCollection()?.set.mock.calls.at(-1)?.[1] as vscode.Diagnostic[] | undefined;
+    }
+
+    /** A registry that has `OTHER_TAG` and nothing else. */
+    function fetchFindingOnlyOtherTag(): Mock<(url: string) => Promise<ReturnType<typeof fakeFetchResponse>>> {
+      return vi.fn(async (url: string) => Promise.resolve(url.endsWith(`/manifests/${OTHER_TAG}`) ? fakeFetchResponse(200) : NOT_FOUND));
+    }
+
+    it('should re-check an edited values file once typing pauses, with no save', async () => {
+      const fetch = fetchFindingOnlyOtherTag();
+      activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+      const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+      const editor = await openInVisibleEditor(document);
+
+      expect(getSingleDiagnostic(lastPublishedDiagnostics()).message).toContain(TAG);
+
+      await typeInto(document, valuesWithTag(OTHER_TAG));
+      await vi.advanceTimersByTimeAsync(PAUSE_MS);
+      await settle();
+
+      expect(fetch).toHaveBeenLastCalledWith(`https://registry-1.docker.io/v2/library/nginx/manifests/${OTHER_TAG}`, expect.anything());
+      expect(lastPublishedDiagnostics()).toEqual([]);
+      expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+    });
+
+    it('should issue no request while typing continues, and one check once it pauses', async () => {
+      const KEYSTROKE_GAP_MS = 300;
+      const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+      activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+      const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+      await openInVisibleEditor(document);
+      fetch.mockClear();
+
+      for (const tag of ['1.2', '1.20', '1.20.', '1.20.1']) {
+        await typeInto(document, valuesWithTag(tag));
+        await vi.advanceTimersByTimeAsync(KEYSTROKE_GAP_MS);
+        await settle();
+      }
+
+      expect(fetch).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(PAUSE_MS - KEYSTROKE_GAP_MS);
+      await settle();
+
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch).toHaveBeenCalledWith('https://registry-1.docker.io/v2/library/nginx/manifests/1.20.1', expect.anything());
+    });
+
+    it('should serve edits back and forth between two already-seen tags from cache', async () => {
+      const fetch = fetchFindingOnlyOtherTag();
+      activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+      const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+      const editor = await openInVisibleEditor(document);
+
+      for (const tag of [OTHER_TAG, TAG, OTHER_TAG, TAG, OTHER_TAG]) {
+        await typeInto(document, valuesWithTag(tag));
+        await vi.advanceTimersByTimeAsync(PAUSE_MS);
+        await settle();
+      }
+
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+    });
+
+    it('should not re-check on a change event that carries no content change, as a save fires', async () => {
+      const fetch = vi.fn().mockResolvedValue(NOT_FOUND);
+      activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+      const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+      await openInVisibleEditor(document);
+      const setCallsBefore = getLastDiagnosticCollection()?.set.mock.calls.length;
+
+      await emitDidChangeTextDocument(document, []);
+      await vi.advanceTimersByTimeAsync(PAUSE_MS);
+      await settle();
+
+      expect(getLastDiagnosticCollection()?.set.mock.calls.length).toBe(setCallsBefore);
+    });
+
+    it('should drop a pending re-check when the extension deactivates', async () => {
+      const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+      activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+      const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+      await openInVisibleEditor(document);
+      fetch.mockClear();
+
+      await typeInto(document, valuesWithTag(OTHER_TAG));
+      for (const subscription of context.subscriptions) {
+        subscription.dispose();
+      }
+      await vi.advanceTimersByTimeAsync(PAUSE_MS);
+      await settle();
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('should leave the standing results alone when typing resumes while a re-check waits on a registry', async () => {
+      type FakeResponse = ReturnType<typeof fakeFetchResponse>;
+      let answerSlowRequest: (response: FakeResponse) => void = () => undefined;
+      const slowAnswer = new Promise<FakeResponse>((resolve) => {
+        answerSlowRequest = resolve;
+      });
+      const fetch = vi.fn(async (url: string) => (url.endsWith(`/manifests/${OTHER_TAG}`) ? slowAnswer : NOT_FOUND));
+      activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+      const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML);
+      await openInVisibleEditor(document);
+      const setCallsBefore = getLastDiagnosticCollection()?.set.mock.calls.length;
+
+      await typeInto(document, valuesWithTag(OTHER_TAG));
+      await vi.advanceTimersByTimeAsync(PAUSE_MS);
+      await settle();
+      await typeInto(document, valuesWithTag(`${OTHER_TAG}.`));
+      answerSlowRequest(fakeFetchResponse(200));
+      await settle();
+
+      // Published against text that has moved on, the answer would match
+      // nothing in the file and wipe every squiggle until the next pause.
+      expect(getLastDiagnosticCollection()?.set.mock.calls.length).toBe(setCallsBefore);
+    });
   });
 });
