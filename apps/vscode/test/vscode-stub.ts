@@ -140,6 +140,12 @@ function createTextEditorStub(document: unknown): TextEditorStub {
   return { document, setDecorations: vi.fn() };
 }
 
+/** The part of a `vscode.TextDocumentChangeEvent` the extension reads. */
+interface TextDocumentChangeEventStub {
+  readonly document: unknown;
+  readonly contentChanges: readonly unknown[];
+}
+
 /**
  * A minimal `vscode.Event<T>`-shaped emitter: `event` is what extension code
  * subscribes through, `fire` is a test-only helper (not part of the real
@@ -174,6 +180,7 @@ function createEventEmitterStub<T>(): {
 }
 
 const onDidOpenTextDocumentEmitter = createEventEmitterStub<unknown>();
+const onDidChangeTextDocumentEmitter = createEventEmitterStub<TextDocumentChangeEventStub>();
 const onDidChangeVisibleTextEditorsEmitter = createEventEmitterStub<readonly TextEditorStub[]>();
 
 // Mirrors the real `vscode.StatusBarAlignment` member names and values
@@ -338,6 +345,7 @@ const onDidChangeConfigurationEmitter = createEventEmitterStub<ConfigurationChan
 
 const workspace = {
   onDidOpenTextDocument: onDidOpenTextDocumentEmitter.event,
+  onDidChangeTextDocument: onDidChangeTextDocumentEmitter.event,
   onDidChangeConfiguration: onDidChangeConfigurationEmitter.event,
   getConfiguration: vi.fn((section: string) => ({
     get: (key: string, fallback?: unknown): unknown => configurationValues.get(`${section}.${key}`) ?? fallback,
@@ -356,6 +364,16 @@ const workspace = {
  */
 async function emitDidOpenTextDocument(document: unknown): Promise<void> {
   await onDidOpenTextDocumentEmitter.fire(document);
+}
+
+/**
+ * Test-only helper that fires `workspace.onDidChangeTextDocument` and awaits
+ * every registered listener, standing in for a keystroke. The document is
+ * expected to carry its edited text and bumped version already, as it does
+ * by the time real VS Code fires the event.
+ */
+async function emitDidChangeTextDocument(document: unknown, contentChanges: readonly unknown[] = [{}]): Promise<void> {
+  await onDidChangeTextDocumentEmitter.fire({ document, contentChanges });
 }
 
 /**
@@ -429,6 +447,7 @@ export {
   DiagnosticSeverity,
   emitDidChangeChartMetadata,
   emitDidChangeConfiguration,
+  emitDidChangeTextDocument,
   emitDidChangeVisibleTextEditors,
   emitDidOpenTextDocument,
   getLastDiagnosticCollection,

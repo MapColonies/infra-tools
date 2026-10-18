@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CHART_METADATA_FILE_NAME, type ReadTextFile } from 'helm';
 import { localDockerCredentials, type CredentialEnvironment, type FetchLike } from 'oci-registry';
+import { debounceByKey } from './debounce-by-key';
 import { diagnosticsFor } from './diagnostics';
 import { hoverFor } from './hover';
 import { LATEST_TAG_WARNING_SETTING, readWarnOnLatestTag } from './latest-tag-setting';
@@ -16,6 +17,10 @@ const DIAGNOSTIC_COLLECTION_NAME = 'infra-tools-images';
 // Across every check at once, not per file, so a values file with dozens of
 // references — or several opening together — cannot saturate the connection.
 const MAX_REQUESTS_IN_FLIGHT = 6;
+
+// Long enough that a run of keystrokes is one check, not one per character;
+// short enough that a corrected tag goes green before the developer looks away.
+const TYPING_PAUSE_MS = 750;
 
 // Built from the name chart resolution looks for, rather than spelled out
 // again here: a watcher covering a different set of files than the resolver
@@ -54,10 +59,11 @@ async function readWorkspaceTextFile(path: string): Promise<string | undefined> 
 
 /**
  * Called by the extension host on activation. Wires the three surfaces a
- * check is shown on, re-checks a Helm values file whenever one opens,
- * re-checks the files a chart governs whenever its metadata changes,
- * re-checks every checked file whenever the registry override set changes,
- * and republishes their diagnostics whenever the `latest` warning is switched.
+ * check is shown on, re-checks a Helm values file whenever one opens or
+ * typing in it pauses, re-checks the files a chart governs whenever its
+ * metadata changes, re-checks every checked file whenever the registry
+ * override set changes, and republishes their diagnostics whenever the
+ * `latest` warning is switched.
  */
 function activate(context: vscode.ExtensionContext, dependencies: ActivateDependencies = {}): void {
   const channel = vscode.window.createOutputChannel('Infra Tools');
@@ -107,6 +113,7 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
    * A check superseded while it waited on a registry publishes nothing. Two
    * `Chart.yaml` saves in quick succession would otherwise let the slower
    * answer win, and that answer is about the `appVersion` already replaced.
+   * Likewise a check of text the developer has since typed over.
    */
   async function checkDocument(document: vscode.TextDocument): Promise<void> {
     const key = document.uri.toString();
@@ -121,6 +128,13 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
       const checked = await checkImageReferencesInDocument(document, { ...checkDependencies, overrideRegistries: readOverrideRegistries() });
 
       if (checked === undefined || latestCheckByDocument.get(key) !== checkNumber) {
+        return;
+      }
+
+      // Text edited while the registry answered has its own re-check coming
+      // once typing pauses. Publishing this one would match nothing in the
+      // edited text and clear every squiggle until then.
+      if (checked.version !== document.version) {
         return;
       }
 
@@ -196,7 +210,26 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
     }
   }
 
+  /**
+   * Re-checks a document once typing in it pauses, so a corrected tag clears
+   * its squiggle without a save. Every keystroke restarts the wait: checking
+   * on each one would spend the registry rate limit on half-typed tags.
+   */
+  const recheckDebouncer = debounceByKey(TYPING_PAUSE_MS);
+  context.subscriptions.push({ dispose: recheckDebouncer.dispose });
+
+  function recheckAfterTyping(event: vscode.TextDocumentChangeEvent): void {
+    // A change event with no content changes only flips the dirty state, as
+    // a save does; the text is what was already checked.
+    if (event.contentChanges.length === 0) {
+      return;
+    }
+
+    recheckDebouncer.schedule(event.document.uri.toString(), async () => checkDocument(event.document));
+  }
+
   context.subscriptions.push(vscode.workspace.onDidOpenTextDocument(checkDocument));
+  context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(recheckAfterTyping));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(applyOverrideChange));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(applyLatestTagWarningChange));
 
