@@ -1,6 +1,6 @@
 {
   "name": "helm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Helm chart knowledge: locating image references in values file source.",
   "private": true,
   "main": "./dist/index.js",
