@@ -4,12 +4,18 @@ import { localDockerCredentials, type CredentialEnvironment, type FetchLike } fr
 import { diagnosticsFor } from './diagnostics';
 import { hoverFor } from './hover';
 import { LATEST_TAG_WARNING_SETTING, readWarnOnLatestTag } from './latest-tag-setting';
+import { limitConcurrency } from './limit-concurrency';
 import { createLoginPrompts } from './login-prompts';
 import { applyMarks, createMarkDecorationType } from './marks';
 import { checkImageReferencesInDocument, checksAsOf, registriesNeedingLogin, type DocumentChecks } from './reference-check';
+import { createVerdictCache } from './verdict-cache';
 import { createOverrideStatus, readOverrideRegistries, REGISTRY_OVERRIDES_SETTING } from './registry-overrides';
 
 const DIAGNOSTIC_COLLECTION_NAME = 'infra-tools-images';
+
+// Across every check at once, not per file, so a values file with dozens of
+// references — or several opening together — cannot saturate the connection.
+const MAX_REQUESTS_IN_FLIGHT = 6;
 
 // Built from the name chart resolution looks for, rather than spelled out
 // again here: a watcher covering a different set of files than the resolver
@@ -23,6 +29,8 @@ interface ActivateDependencies {
   readonly credentials?: CredentialEnvironment;
   /** Only tests override this; production activation reads through the workspace file system. */
   readonly readTextFile?: ReadTextFile;
+  /** Only tests override this; production activation reads the wall clock. */
+  readonly now?: () => number;
 }
 
 /**
@@ -57,9 +65,10 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   context.subscriptions.push(channel);
 
   const checkDependencies = {
-    fetch: dependencies.fetch ?? (globalThis as unknown as { fetch: FetchLike }).fetch,
+    fetch: limitConcurrency(dependencies.fetch ?? (globalThis as unknown as { fetch: FetchLike }).fetch, MAX_REQUESTS_IN_FLIGHT),
     credentials: dependencies.credentials ?? localDockerCredentials,
     readTextFile: dependencies.readTextFile ?? readWorkspaceTextFile,
+    verdictCache: createVerdictCache(context.globalState, dependencies.now ?? Date.now),
   };
   const diagnostics = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_COLLECTION_NAME);
   context.subscriptions.push(diagnostics);
@@ -129,8 +138,9 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
   }
 
   /**
-   * Re-checks every open document whose last check read this metadata file.
-   * A bumped `appVersion` otherwise leaves a stale checkmark standing at
+   * Evicts the cached verdicts this metadata file's `appVersion` supplied a
+   * tag for, then re-checks every open document whose last check read it. A
+   * bumped `appVersion` otherwise leaves a stale checkmark standing at
    * exactly the moment the developer is relying on it.
    *
    * Only a document that already resolved through this chart qualifies. A
@@ -139,6 +149,8 @@ function activate(context: vscode.ExtensionContext, dependencies: ActivateDepend
    * every write, and no ticket has asked for it yet.
    */
   async function recheckDocumentsGovernedBy(uri: vscode.Uri): Promise<void> {
+    checkDependencies.verdictCache.evictChart(uri.path);
+
     for (const document of vscode.workspace.textDocuments) {
       if (checksByDocument.get(document.uri.toString())?.chartMetadataPath === uri.path) {
         await checkDocument(document);

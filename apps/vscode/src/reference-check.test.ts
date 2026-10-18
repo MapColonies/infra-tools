@@ -6,7 +6,9 @@ import { bumpVersion, createFakeDocument } from '../test/fake-document';
 import { noDockerCredentials } from '../test/fake-credentials';
 import { createFakeFileSystem } from '../test/fake-file-system';
 import { fakeFetchResponse } from '../test/fake-fetch';
+import { createFakeContext } from '../test/fake-context';
 import { checkImageReferencesInDocument, checksAsOf, type DocumentChecks } from './reference-check';
+import { createVerdictCache, type VerdictCache } from './verdict-cache';
 
 const REPOSITORY = 'docker.io/library/nginx';
 const TAG = '1.19';
@@ -30,9 +32,20 @@ const APPVERSIONLESS_CHART_YAML = ['apiVersion: v2', 'name: my-service', ''].joi
 const NO_FILES = createFakeFileSystem({});
 const ONE_CHART = createFakeFileSystem({ '/repo/chart/Chart.yaml': CHART_YAML });
 
+/** An empty cache per check, so every test here sees the registry asked; caching is pinned in `extension.test.ts`. */
+function emptyVerdictCache(): VerdictCache {
+  return createVerdictCache(createFakeContext().globalState, Date.now);
+}
+
 /** Checks a document this feature is expected to have something to say about. */
 async function checkValuesFile(document: vscode.TextDocument, fetch: FetchLike, readTextFile: ReadTextFile = NO_FILES): Promise<DocumentChecks> {
-  const checked = await checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, overrideRegistries: [], readTextFile });
+  const checked = await checkImageReferencesInDocument(document, {
+    fetch,
+    credentials: noDockerCredentials,
+    overrideRegistries: [],
+    readTextFile,
+    verdictCache: emptyVerdictCache(),
+  });
 
   if (checked === undefined) {
     throw new Error('expected the document to be checked');
@@ -47,7 +60,13 @@ describe('reference-check', () => {
     const document = createFakeDocument('/repo/chart/deployment.yaml', VALUES_YAML);
 
     await expect(
-      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, overrideRegistries: [], readTextFile: NO_FILES })
+      checkImageReferencesInDocument(document, {
+        fetch,
+        credentials: noDockerCredentials,
+        overrideRegistries: [],
+        readTextFile: NO_FILES,
+        verdictCache: emptyVerdictCache(),
+      })
     ).resolves.toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -57,7 +76,13 @@ describe('reference-check', () => {
     const document = createFakeDocument('/repo/chart/values.yaml', VALUES_YAML, 'plaintext');
 
     await expect(
-      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, overrideRegistries: [], readTextFile: NO_FILES })
+      checkImageReferencesInDocument(document, {
+        fetch,
+        credentials: noDockerCredentials,
+        overrideRegistries: [],
+        readTextFile: NO_FILES,
+        verdictCache: emptyVerdictCache(),
+      })
     ).resolves.toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -77,7 +102,13 @@ describe('reference-check', () => {
     const document = createFakeDocument('/repo/chart/templates/values.yaml', VALUES_YAML);
 
     await expect(
-      checkImageReferencesInDocument(document, { fetch, credentials: noDockerCredentials, overrideRegistries: [], readTextFile: ONE_CHART })
+      checkImageReferencesInDocument(document, {
+        fetch,
+        credentials: noDockerCredentials,
+        overrideRegistries: [],
+        readTextFile: ONE_CHART,
+        verdictCache: emptyVerdictCache(),
+      })
     ).resolves.toBeUndefined();
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -203,6 +234,7 @@ describe('reference-check', () => {
       credentials: noDockerCredentials,
       overrideRegistries: ['quay.io'],
       readTextFile: NO_FILES,
+      verdictCache: emptyVerdictCache(),
     });
 
     expect(fetch).toHaveBeenCalledTimes(1);

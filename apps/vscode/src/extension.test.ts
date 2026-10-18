@@ -38,6 +38,28 @@ const TAGLESS_VALUES_YAML = ['image:', `  repository: ${REPOSITORY}`, '  pullPol
 // what they did before chart context existed.
 const NO_FILES = createFakeFileSystem({});
 
+const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
+const HOUR_MS = 60 * MINUTE_MS;
+const NOT_FOUND = fakeFetchResponse(404, { errors: [{ code: 'MANIFEST_UNKNOWN' }] });
+
+/** A clock a test moves by hand, starting from an arbitrary fixed instant. */
+function createFakeClock(): { now: () => number; advance: (ms: number) => void } {
+  let current = Date.UTC(2026, 0, 1);
+
+  return {
+    now: () => current,
+    advance: (ms) => {
+      current += ms;
+    },
+  };
+}
+
+/** Opens a fresh copy of the same values file, as reopening it after closing does. */
+async function reopenValuesFile(yaml: string = VALUES_YAML): Promise<TextEditorStub> {
+  return openInVisibleEditor(createFakeDocument('/repo/chart/values.yaml', yaml));
+}
+
 /** Chart metadata declaring `appVersion`, for tests about what a bump re-checks. */
 function chartMetadataWithAppVersion(appVersion: string): string {
   return ['apiVersion: v2', 'name: my-service', `appVersion: ${appVersion}`, ''].join('\n');
@@ -371,6 +393,126 @@ describe('extension', () => {
     );
   });
 
+  it('should issue no request when a file is reopened with unchanged references', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    await emitDidOpenTextDocument(createFakeDocument('/repo/chart/values.yaml', VALUES_YAML));
+    const editor = await openInVisibleEditor(createFakeDocument('/repo/chart/values.yaml', VALUES_YAML));
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
+  it('should reuse a confirmed result for most of a day, and ask again once it is a day old', async () => {
+    const clock = createFakeClock();
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES, now: clock.now });
+
+    await reopenValuesFile();
+    clock.advance(23 * HOUR_MS);
+    await reopenValuesFile();
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    clock.advance(2 * HOUR_MS);
+    await reopenValuesFile();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('should re-check a not-found result after about a minute, so a freshly pushed tag goes green', async () => {
+    const clock = createFakeClock();
+    const fetch = vi.fn().mockResolvedValue(NOT_FOUND);
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES, now: clock.now });
+
+    await reopenValuesFile();
+    clock.advance(30 * SECOND_MS);
+    await reopenValuesFile();
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    fetch.mockResolvedValue(fakeFetchResponse(200));
+    clock.advance(31 * SECOND_MS);
+    const editor = await reopenValuesFile();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
+  it('should re-check an unverifiable result after tens of seconds', async () => {
+    const clock = createFakeClock();
+    const fetch = vi.fn().mockRejectedValue(new Error('getaddrinfo ENOTFOUND registry-1.docker.io'));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES, now: clock.now });
+
+    await reopenValuesFile();
+    clock.advance(10 * SECOND_MS);
+    await reopenValuesFile();
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    clock.advance(25 * SECOND_MS);
+    await reopenValuesFile();
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('should ask a registry once for the same image named twice in one file', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    const yaml = ['web:', `  repository: ${REPOSITORY}`, `  tag: ${TAG}`, 'worker:', `  repository: ${REPOSITORY}`, `  tag: ${TAG}`, ''].join('\n');
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    const editor = await reopenValuesFile(yaml);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(getLastDecorations(editor).map((decoration) => decoration.renderOptions?.after?.contentText)).toEqual([' ✓', ' ✓']);
+  });
+
+  it('should keep cached results across a window reload', async () => {
+    const fetch = vi.fn().mockResolvedValue(fakeFetchResponse(200));
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+    await reopenValuesFile();
+
+    // A reload is a deactivation followed by a fresh activation against the
+    // same extension state; nothing held in memory makes it across.
+    for (const subscription of context.subscriptions) {
+      subscription.dispose();
+    }
+    context = { ...context, subscriptions: [] };
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+    const editor = await reopenValuesFile();
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
+  it('should keep no more than six registry requests in flight for a file with many references', async () => {
+    const MAX_IN_FLIGHT = 6;
+    const REFERENCE_COUNT = 10;
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const fetch = vi.fn(async () => {
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      // Held for a macrotask, so every request the check is willing to
+      // start has started before any of them answers.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight -= 1;
+
+      return fakeFetchResponse(200);
+    });
+    const yaml = Array.from({ length: REFERENCE_COUNT }, (_, index) =>
+      [`image${String(index)}:`, `  repository: docker.io/library/app${String(index)}`, '  tag: 1.0.0'].join('\n')
+    ).join('\n');
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
+
+    const editor = await reopenValuesFile(yaml);
+
+    expect(fetch).toHaveBeenCalledTimes(REFERENCE_COUNT);
+    expect(peakInFlight).toBe(MAX_IN_FLIGHT);
+    expect(getLastDecorations(editor)).toHaveLength(REFERENCE_COUNT);
+  });
+
   it('should issue no request for a document that is not a values file', async () => {
     const fetch = vi.fn();
     activate(context, { fetch, credentials: noDockerCredentials, readTextFile: NO_FILES });
@@ -412,6 +554,52 @@ describe('extension', () => {
     // and the chart nobody touched has nothing new to be asked about.
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith(`https://registry-1.docker.io/v2/library/nginx/manifests/${TAG}`, expect.anything());
+  });
+
+  it('should evict a chart cached results when its appVersion changes, rather than wait for them to expire', async () => {
+    const fetch = vi.fn().mockResolvedValue(NOT_FOUND);
+    const files: Record<string, string> = { '/repo/chart/Chart.yaml': chartMetadataWithAppVersion(TAG) };
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: createFakeFileSystem(files) });
+
+    const document = createFakeDocument('/repo/chart/values.yaml', TAGLESS_VALUES_YAML);
+    setOpenTextDocuments([document]);
+    const editor = await openInVisibleEditor(document);
+
+    // Bumped away and straight back while the tag is pushed: the not-found
+    // cached for it seconds ago must not outlive the bump that undid it.
+    fetch.mockResolvedValue(fakeFetchResponse(200));
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion('1.20');
+    await emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion(TAG);
+    await emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+
+    expect(fetch).toHaveBeenLastCalledWith(`https://registry-1.docker.io/v2/library/nginx/manifests/${TAG}`, expect.anything());
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
+  });
+
+  it('should evict a chart cached results even when another file asked about the same tag first', async () => {
+    const fetch = vi.fn().mockResolvedValue(NOT_FOUND);
+    const files: Record<string, string> = { '/repo/chart/Chart.yaml': chartMetadataWithAppVersion(TAG) };
+    activate(context, { fetch, credentials: noDockerCredentials, readTextFile: createFakeFileSystem(files) });
+
+    // Same image and tag, written out in a file no chart governs, so the
+    // chart's own check is answered from what this one cached.
+    await emitDidOpenTextDocument(createFakeDocument('/repo/standalone/values.yaml', VALUES_YAML));
+    const document = createFakeDocument('/repo/chart/values.yaml', TAGLESS_VALUES_YAML);
+    setOpenTextDocuments([document]);
+    const editor = await openInVisibleEditor(document);
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    fetch.mockResolvedValue(fakeFetchResponse(200));
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion('1.20');
+    await emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+    files['/repo/chart/Chart.yaml'] = chartMetadataWithAppVersion(TAG);
+    await emitDidChangeChartMetadata({ path: '/repo/chart/Chart.yaml' });
+
+    expect(fetch).toHaveBeenLastCalledWith(`https://registry-1.docker.io/v2/library/nginx/manifests/${TAG}`, expect.anything());
+    expect(getLastDecorations(editor)[0]?.renderOptions?.after?.contentText).toBe(' ✓');
   });
 
   it('should keep the latest re-check when an earlier one for the same document answers after it', async () => {
